@@ -6,11 +6,15 @@ Backstage and LeanIX are published on meta.linked.archi. You fill in forms, a
 relationship matrix and checklists. The studio writes the OWL, SHACL and SKOS, and the
 `arch:Metamodel` manifest that ties them together.
 
-It needs no build step, no server and no dependencies. Open `index.html` in a browser:
+**Use it online: <https://linked-archi.github.io/metamodel-studio/>**. Your work stays in
+your browser (localStorage) until you save or export it. Nothing is uploaded.
+
+It needs no build step, no server and no dependencies, so it also runs offline. Open
+`index.html` in a browser:
 
 ```bash
 xdg-open index.html      # or: open index.html on macOS, or double-click it
-npm run serve            # or serve the folder; any static host (e.g. GitHub Pages) works
+npm run serve            # or serve the folder from any static host
 ```
 
 The same code runs from the command line for CI and scripting (Node 18 or newer, no
@@ -146,6 +150,10 @@ npm run templates                                # after changing the importer o
 ```
 
 A test fails when the committed templates are stale.
+
+Every push to `main` runs the tests and redeploys the online version
+(`.github/workflows/pages.yml`). It publishes only what the browser loads: `index.html`,
+`styles.css`, `js/`, `vendor/` and `templates/`.
 
 ## Licence
 
