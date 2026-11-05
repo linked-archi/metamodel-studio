@@ -1,0 +1,14 @@
+{
+  "name": "linked-archi-metamodel-studio",
+  "version": "0.1.0",
+  "description": "Design complete Linked.Archi metamodels and export them as semantic asset sets (OWL, SHACL, SKOS, viewpoints, notation, arch:Metamodel manifest).",
+  "license": "Apache-2.0",
+  "private": true,
+  "bin": { "la-studio": "scripts/cli.js" },
+  "scripts": {
+    "test": "node --test tests/studio.test.js",
+    "templates": "node scripts/build-templates.js",
+    "serve": "python3 -m http.server 8000"
+  },
+  "engines": { "node": ">=18" }
+}

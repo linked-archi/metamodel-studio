@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet -r requirements-dev.txt
+      - run: npm test
+      - run: python -m unittest discover -s tests -v
+      - name: Templates generate without errors
+        run: |
+          node scripts/cli.js template cloudplatform -o /tmp/cp.json
+          node scripts/cli.js generate /tmp/cp.json -o /tmp/out
+          node scripts/cli.js lint /tmp/cp.json

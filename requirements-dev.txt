@@ -1,0 +1,3 @@
+# Independent RDF/SHACL checks of the generated output (tests/test_metamodel_studio.py).
+pyoxigraph
+pyshacl

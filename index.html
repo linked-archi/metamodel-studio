@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Metamodel Studio</title>
+  <meta name="description" content="Design a complete Linked.Archi metamodel — ontology, SHACL rules, taxonomy, viewpoints, notation and arch:Metamodel manifest — and export it as Turtle.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true"><path d="M16 2 29 9.5v13L16 30 3 22.5v-13z" fill="none" stroke="currentColor" stroke-width="2.2"/><circle cx="16" cy="16" r="4.2" fill="currentColor"/><path d="M16 2v9.8M16 20.2V30M3 9.5l9.4 5.4M19.6 17.1 29 22.5M29 9.5l-9.4 5.4M12.4 17.1 3 22.5" stroke="currentColor" stroke-width="1.4"/></svg>
+      <div>
+        <div class="brand-name">Metamodel Studio</div>
+        <div class="brand-sub">Linked.Archi semantic asset sets</div>
+      </div>
+    </div>
+    <div class="project-title" id="projectTitle"></div>
+    <nav class="actions">
+      <div class="menu">
+        <button class="btn" id="btnNew" aria-haspopup="true">New ▾</button>
+        <div class="menu-pop" id="menuNew" hidden></div>
+      </div>
+      <button class="btn" id="btnOpen" title="Open a .studio.json project">Open…</button>
+      <button class="btn" id="btnImport" title="Import existing Turtle documents (ontology, shapes, taxonomy, viewpoints, manifest)">Import Turtle…</button>
+      <button class="btn" id="btnSave" title="Download the project file">Save project</button>
+      <button class="btn primary" id="btnExport" title="Download every generated document as a .zip">Export asset set</button>
+      <button class="btn icon" id="btnUndo" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
+      <button class="btn icon" id="btnRedo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo">↷</button>
+      <button class="btn icon" id="btnTheme" title="Toggle dark mode" aria-label="Toggle dark mode">☾</button>
+    </nav>
+    <input type="file" id="fileOpen" accept=".json,application/json" hidden>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar" id="sidebar" aria-label="Sections"></aside>
+    <main class="main" id="main" tabindex="-1"></main>
+  </div>
+
+  <dialog id="dlgImport" class="dialog">
+    <form method="dialog" class="dialog-body" id="importForm">
+      <h2>Import Turtle documents</h2>
+      <p class="muted">Load an existing metamodel — for example the published ArchiMate 4.0 documents — as the starting point.
+        Give any of: ontology (<code>…/onto</code>), SHACL shapes, taxonomy, viewpoints and the <code>arch:Metamodel</code> manifest.
+        Element and relationship classes are found through <code>rdfs:subClassOf arch:Element</code> /
+        <code>arch:QualifiedRelationship</code>; rules are read from relationship shapes.</p>
+      <label class="field"><span>Files</span><input type="file" id="importFiles" multiple accept=".ttl,.turtle,text/turtle"></label>
+      <label class="field"><span>…or URLs, one per line (the server must allow cross-origin requests)</span>
+        <textarea id="importUrls" rows="4" placeholder="https://meta.linked.archi/archimate4/onto&#10;https://meta.linked.archi/archimate4/viewpoints"></textarea></label>
+      <div id="importReport" class="import-report" hidden></div>
+      <div class="dialog-actions">
+        <button class="btn" value="cancel" formnovalidate>Cancel</button>
+        <button class="btn primary" id="importGo" value="default">Import</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="vendor/n3.min.js"></script>
+  <script src="js/core.js"></script>
+  <script src="js/generator.js"></script>
+  <script src="js/importer.js"></script>
+  <script src="js/lint.js"></script>
+  <script src="js/zip.js"></script>
+  <script src="templates/templates.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
