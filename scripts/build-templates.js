@@ -5,11 +5,9 @@
  *
  *   node scripts/build-templates.js
  *
- * The ArchiMate 4.0 template is imported from the ontology and viewpoint extracts of
- * linked-archi-meta in fixtures/ (see fixtures/README.md). Those extracts carry no ArchiMate 4.0 SHACL
- * shapes and only one taxonomy concept, so the template's taxonomy is derived from the
- * 4.0 domain marker classes, and its relationship rules start empty: import the published
- * archimate4 shapes, or seed them from the domain/range guidance in the studio.
+ * The ArchiMate 4.0 template is imported from the published ArchiMate 4.0 documents in fixtures/
+ * (fixtures/README.md): its element and relationship types, relationship rules, taxonomy, proposal
+ * orders, viewpoints and notation, own shapes included.
  */
 "use strict";
 
@@ -26,74 +24,11 @@ function read(rel) {
 }
 
 function archimate4() {
-  const { project } = importer.importTurtle([
-    read("fixtures/archimate4-onto.ttl"),
-    read("fixtures/archimate4-viewpoints.ttl"),
-  ]);
-  const m = project.meta;
-  m.name = "ArchiMate4";
-  m.title = "ArchiMate 4.0";
-  m.frameworkLabel = "ArchiMate";
-  m.manifestStakeholders = ["EnterpriseArchitect", "SolutionArchitect", "BusinessArchitect", "ApplicationArchitect"];
-  m.manifestConcerns = ["StructureConcern", "BehaviorConcern", "DependencyConcern", "DeploymentConcern", "EvolutionConcern"];
-
-  // Taxonomy from the domain marker classes (Figure 2-4 of the 4.0 specification).
-  const domains = [
-    ["CommonDomain", "Common Domain", "CommonDomainElement"],
-    ["BusinessDomain", "Business Domain", "BusinessDomainElement"],
-    ["ApplicationDomain", "Application Domain", "ApplicationDomainElement"],
-    ["TechnologyDomain", "Technology Domain", "TechnologyDomainElement"],
-    ["StrategyDomain", "Strategy Domain", "StrategyElement"],
-    ["MotivationDomain", "Motivation Domain", "MotivationElement"],
-    ["ImplementationAndMigrationDomain", "Implementation & Migration Domain", "ImplementationAndMigrationDomainElement"],
-  ];
-  project.taxonomy.label = "ArchiMate 4.0 Concept Scheme";
-  project.taxonomy.categories = [
-    { id: "Domains", label: "Domains", definition: "The element types by the domain of the 4.0 Hexagonion they belong to.", parent: "" },
-    ...domains.map(([id, label]) => ({ id, label, definition: "", parent: "Domains" })),
-    { id: "OtherElements", label: "Composite elements and junctions", definition: "Elements that belong to no single domain.", parent: "Domains" },
-    { id: "Relationships", label: "Relationships", definition: "The relationship types by their kind.", parent: "" },
-    { id: "StructuralRelationships", label: "Structural relationships", definition: "", parent: "Relationships" },
-    { id: "DependencyRelationships", label: "Dependency relationships", definition: "", parent: "Relationships" },
-    { id: "DynamicRelationships", label: "Dynamic relationships", definition: "", parent: "Relationships" },
-    { id: "OtherRelationships", label: "Other relationships", definition: "", parent: "Relationships" },
-  ];
-  for (const e of project.elements) {
-    if (e.abstract) continue;
-    const anc = core.ancestors(project, e.id);
-    const hit = domains.find(([, , marker]) => anc.has(marker));
-    e.categories = [hit ? hit[0] : "OtherElements"];
-  }
-  const relKinds = {
-    StructuralRelationships: ["Composition", "Aggregation", "Assignment", "Realization"],
-    DependencyRelationships: ["Serving", "Access", "ReadAccess", "WriteAccess", "ReadWriteAccess", "Influence", "Association", "DirectedAssociation"],
-    DynamicRelationships: ["Triggering", "Flow"],
-    OtherRelationships: ["Specialization"],
-  };
-  for (const r of project.relationships) {
-    const kind = Object.keys(relKinds).find((k) => relKinds[k].includes(r.id));
-    r.categories = [kind || "OtherRelationships"];
-  }
-  project.proposalOrder = ["Serving", "Realization", "Assignment", "Composition", "Aggregation", "Access", "Triggering", "Flow", "Influence", "Specialization", "Association"]
-    .filter((id) => project.relationships.some((r) => r.id === id));
-
-  // Default colours of the ArchiMate notation, by domain.
-  const colours = {
-    BusinessDomain: "#ffffb5", ApplicationDomain: "#b5ffff", TechnologyDomain: "#c9e7b7",
-    StrategyDomain: "#f5deaa", MotivationDomain: "#ccccff", ImplementationAndMigrationDomain: "#ffe0e0",
-    CommonDomain: "#e8e8e8", OtherElements: "#ffffff",
-  };
-  for (const e of project.elements) {
-    if (e.abstract) continue;
-    e.notation = { fill: colours[e.categories[0]] || "#ffffff", stroke: "#000000", shape: /Junction/.test(e.id) ? "circle" : "rectangle" };
-  }
-  const lines = { Influence: "dashed", Access: "dotted", ReadAccess: "dotted", WriteAccess: "dotted", ReadWriteAccess: "dotted", Flow: "dashed", Realization: "dashed" };
-  const arrows = {
-    Composition: "filled-diamond", Aggregation: "diamond", Assignment: "filled", Realization: "hollow-triangle",
-    Serving: "open", Access: "none", ReadAccess: "open", WriteAccess: "open", ReadWriteAccess: "open", Influence: "open",
-    Triggering: "filled", Flow: "filled", Specialization: "hollow-triangle", Association: "none", DirectedAssociation: "open",
-  };
-  for (const r of project.relationships) r.style = { line: lines[r.id] || "solid", arrow: arrows[r.id] || "open", stroke: "#000000" };
+  const { project } = importer.importTurtle(
+    ["onto", "tax", "viewpoints", "notation", "metamodel", "relationship-shapes"].map((f) => read(`fixtures/archimate4/archimate4-${f}.ttl`)),
+  );
+  // The framework's label is in archimate-framework.ttl, which the template does not import.
+  project.meta.frameworkLabel = project.meta.frameworkLabel || "ArchiMate";
   return core.normalize(project);
 }
 
@@ -125,10 +60,10 @@ function cloudPlatform() {
     el("ApiGateway", ["PlatformResource", "am4:TechnologyInterface"], ["Integration"], "#fde3b5", "The managed entry point that exposes workloads' APIs.", { label: "API Gateway" }),
   ];
   p.relationships = [
-    { id: "Deployment", label: "Deployment", predicate: "deployedOn", predicateLabel: "Deployed On", notation: "d", parent: "", definition: "A workload runs on a platform resource.", domain: ["Workload"], range: ["Cluster"], categories: ["Structural"], style: { line: "solid", arrow: "filled" } },
-    { id: "Usage", label: "Usage", predicate: "uses", predicateLabel: "Uses", notation: "u", parent: "", definition: "A workload depends on another workload or a resource at run time.", domain: ["Workload"], range: ["Workload", "PlatformResource"], categories: ["Dependency"], style: { line: "dashed", arrow: "open" } },
-    { id: "Publication", label: "Publication", predicate: "publishesTo", predicateLabel: "Publishes To", notation: "p", parent: "Usage", definition: "A workload publishes messages to a queue.", domain: ["Workload"], range: ["MessageQueue"], categories: ["Dependency"], style: { line: "dashed", arrow: "filled" } },
-    { id: "Exposure", label: "Exposure", predicate: "exposes", predicateLabel: "Exposes", notation: "x", parent: "", definition: "An API gateway routes traffic to a workload.", domain: ["ApiGateway"], range: ["Workload"], categories: ["Dependency"], style: { line: "solid", arrow: "open" } },
+    { id: "Deployment", label: "Deployment", predicate: "deployedOn", predicateLabel: "Deployed On", notation: "d", parent: "", definition: "A workload runs on a platform resource.", domain: ["Workload"], range: ["Cluster"], categories: ["Structural"], style: { line: "solid", source: "circle", target: "filled" } },
+    { id: "Usage", label: "Usage", predicate: "uses", predicateLabel: "Uses", notation: "u", parent: "", definition: "A workload depends on another workload or a resource at run time.", domain: ["Workload"], range: ["Workload", "PlatformResource"], categories: ["Dependency"], style: { line: "dashed", source: "none", target: "open" } },
+    { id: "Publication", label: "Publication", predicate: "publishesTo", predicateLabel: "Publishes To", notation: "p", parent: "Usage", definition: "A workload publishes messages to a queue.", domain: ["Workload"], range: ["MessageQueue"], categories: ["Dependency"], style: { line: "dashed", source: "none", target: "filled" } },
+    { id: "Exposure", label: "Exposure", predicate: "exposes", predicateLabel: "Exposes", notation: "x", parent: "", definition: "An API gateway routes traffic to a workload.", domain: ["ApiGateway"], range: ["Workload"], categories: ["Dependency"], style: { line: "solid", source: "none", target: "open", stroke: "#1f6f8b" } },
   ];
   p.attributes = [
     { id: "resilienceLevel", label: "Resilience Level", definition: "The availability tier a workload is engineered for.", domain: ["Workload"], datatype: "xsd:string", values: ["tier-1", "tier-2", "tier-3"], required: true, multiple: false },
@@ -153,7 +88,11 @@ function cloudPlatform() {
       { id: "Dependency", label: "Dependency", definition: "", parent: "Relationships" },
     ],
   };
-  p.proposalOrder = ["Usage", "Deployment", "Publication", "Exposure"];
+  p.proposalOrders = [
+    { id: "ProposalOrder", label: "", members: ["Usage", "Deployment", "Publication", "Exposure"], domain: [], range: [] },
+    // From a workload to a platform resource, running on it and publishing to it come before using it.
+    { id: "WorkloadToResourceOrder", label: "Workload to platform resource", members: ["Deployment", "Publication", "Usage"], domain: ["Workload"], range: ["PlatformResource"] },
+  ];
   p.purposes = [{ id: "Designing", label: "Designing", definition: "Creating or refining the platform architecture." }, { id: "Operating", label: "Operating", definition: "Running and troubleshooting the platform." }];
   p.concerns = [
     { id: "Placement", label: "Workload placement", definition: "Where each workload runs." },
@@ -176,7 +115,7 @@ function cloudPlatform() {
 const templates = {
   blank: { label: "Blank metamodel", description: "Start from nothing.", project: core.emptyProject() },
   cloudplatform: { label: "Cloud Platform (extends ArchiMate 4.0)", description: "A small custom metamodel with complete relationship rules, taxonomy and viewpoints.", project: cloudPlatform() },
-  archimate4: { label: "ArchiMate 4.0", description: "Elements, relationships and the Appendix C viewpoints from the linked-archi-meta extract. Relationship rules start empty.", project: archimate4() },
+  archimate4: { label: "ArchiMate 4.0", description: "The published ArchiMate 4.0: element and relationship types, relationship rules, taxonomy, proposal orders, the Appendix C viewpoints and the notation.", project: archimate4() },
 };
 for (const t of Object.values(templates)) {
   // Templates must not carry the build date: keep the file stable across rebuilds.

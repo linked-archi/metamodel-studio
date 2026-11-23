@@ -4,11 +4,12 @@ The studio is JavaScript, shared between the browser and its Node CLI; these tes
 the CLI and check its output with independent RDF tooling (pyoxigraph, rdflib, pyshacl).
 They skip when Node is not installed. What they pin:
 
-- every template generates Turtle that parses;
-- the manifest is an ``arch:Metamodel`` naming every asset document;
+- every template generates Turtle that parses, with no error-level finding;
+- every core and core-vis term the documents use is declared in core or core-vis (SReq 1.5);
+- the manifest is an ``arch:Metamodel`` naming every asset document and every proposal order;
 - the generated SHACL accepts permitted relationships and attribute values and rejects the rest;
 - generate -> import -> generate is lossless, so a published set can be edited again;
-- importing the linked-archi-meta ArchiMate 4.0 extracts keeps their substance;
+- importing the published ArchiMate 4.0 keeps what the project model holds;
 - the committed templates are what the build script produces.
 """
 
@@ -83,20 +84,39 @@ class TestGeneratedDocumentsParse(StudioTestCase):
                     self.assertGreater(len(store), 0, path.name)
                 self.assertTrue((out / "README.md").is_file())
                 project = json.loads(next(out.glob("*.studio.json")).read_text(encoding="utf-8"))
-                self.assertEqual(project["format"], "linked-archi-metamodel-studio/1")
+                self.assertEqual(project["format"], "linked-archi-metamodel-studio/2")
 
-    def test_cloudplatform_template_has_no_errors(self):
-        result = _node("lint", str(self.template("cloudplatform")), check=False)
-        self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertNotIn("error\t", result.stdout)
+    def test_every_template_has_no_errors(self):
+        for name in ("blank", "cloudplatform", "archimate4"):
+            with self.subTest(template=name):
+                result = _node("lint", str(self.template(name)), check=False)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertNotIn("error\t", result.stdout)
 
-    def test_archimate4_extract_reports_its_one_dangling_reference(self):
-        # am4:realizes names am4:ImplementationAndMigrationElement in arch:domainIncludes,
-        # and no document in the extract declares that class. The check must surface it.
-        result = _node("lint", str(self.template("archimate4")), check=False)
-        errors = [line for line in result.stdout.splitlines() if line.startswith("error\t")]
-        self.assertEqual(len(errors), 1, result.stdout)
-        self.assertIn("ImplementationAndMigrationElement", errors[0])
+    @unittest.skipUnless(pyoxigraph, "pyoxigraph is not installed")
+    def test_every_core_term_is_declared(self):
+        # SReq 1.5: what the generator writes in arch: and arch-vis: is declared in the published core and
+        # core-vis (fixtures/core/). Terms of core-viewpoints (archvp:) are not checked: the published manifests
+        # name stakeholders core-viewpoints does not declare.
+        declared = set()
+        for name in ("core-onto.ttl", "core-vis-onto.ttl"):
+            store = pyoxigraph.Store()
+            store.bulk_load(path=str(FIXTURES / "core" / name), format=pyoxigraph.RdfFormat.TURTLE)
+            declared |= {q.subject.value for q in store if isinstance(q.subject, pyoxigraph.NamedNode)}
+        namespaces = ("https://meta.linked.archi/core#", "https://meta.linked.archi/core-vis#")
+        for name in ("cloudplatform", "archimate4"):
+            out = self.generate(self.template(name), out=name)
+            used = set()
+            for path in out.glob("*.ttl"):
+                store = pyoxigraph.Store()
+                store.bulk_load(path=str(path), format=pyoxigraph.RdfFormat.TURTLE)
+                for q in store:
+                    for term in (q.subject, q.predicate, q.object):
+                        if isinstance(term, pyoxigraph.NamedNode) and term.value.startswith(namespaces):
+                            used.add(term.value)
+            with self.subTest(template=name):
+                self.assertGreater(len(used), 30)
+                self.assertEqual(sorted(used - declared - set(namespaces)), [])
 
 
 @unittest.skipUnless(pyoxigraph, "pyoxigraph is not installed")
@@ -125,6 +145,7 @@ class TestManifest(StudioTestCase):
         self.assertEqual(assets["viewpointLibrary"], {base + "viewpoints#ViewpointCatalog"})
         self.assertEqual(assets["notationSet"], {base + "notation#CloudPlatformStandardNotation"})
         self.assertEqual(assets["basedOnFramework"], {base + "metamodel#CloudPlatformFramework"})
+        self.assertEqual(assets["relationshipProposalOrder"], {base + "tax#ProposalOrder", base + "tax#WorkloadToResourceOrder"})
 
 
 @unittest.skipUnless(pyshacl, "pyshacl is not installed")
@@ -187,11 +208,24 @@ class TestRoundTrip(StudioTestCase):
                 b = rdflib.Graph().parse(second / path.name)
                 self.assertTrue(rdf_compare.isomorphic(a, b), path.name)
 
-    def test_archimate4_extract_survives_import(self):
-        out = self.generate(self.template("archimate4"), check=False)
-        for name, floor in (("archimate4-onto.ttl", 0.95), ("archimate4-viewpoints.ttl", 0.99)):
+    # What the project model does not hold yet (tasks.md, Known limitations): source attribution on the classes.
+    NOT_HELD = {
+        "http://www.w3.org/2000/01/rdf-schema#seeAlso",
+        "http://purl.org/dc/terms/source",
+        "http://www.w3.org/ns/prov#wasQuotedFrom",
+        "http://www.w3.org/ns/prov#wasDerivedFrom",
+        "http://purl.org/dc/terms/isReplacedBy",
+        "http://www.w3.org/2004/02/skos/core#editorialNote",
+        "http://creativecommons.org/ns#license",
+    }
+
+    def test_archimate4_survives_import(self):
+        # The template is imported from the published documents; generating it again keeps what the model holds.
+        # The documents' own headers are the studio's, so a few header statements differ.
+        out = self.generate(self.template("archimate4"))
+        for name, floor in (("archimate4-onto.ttl", 0.98), ("archimate4-viewpoints.ttl", 0.99)):
             with self.subTest(document=name):
-                original = rdflib.Graph().parse(FIXTURES / name)
+                original = [t for t in rdflib.Graph().parse(FIXTURES / "archimate4" / name) if str(t[1]) not in self.NOT_HELD]
                 regenerated = rdflib.Graph().parse(out / name)
                 kept = sum(1 for t in original if t in regenerated)
                 self.assertGreaterEqual(kept / len(original), floor, f"{kept}/{len(original)}")
@@ -200,14 +234,18 @@ class TestRoundTrip(StudioTestCase):
         project = json.loads(self.template("archimate4").read_text(encoding="utf-8"))
         elements = {e["id"]: e for e in project["elements"]}
         relationships = {r["id"]: r for r in project["relationships"]}
-        self.assertEqual(len(elements), 62)
-        self.assertEqual(sum(e["abstract"] for e in elements.values()), 18)
+        self.assertEqual(len(elements), 61)
+        self.assertEqual(sum(e["abstract"] for e in elements.values()), 17)
         self.assertEqual(len(relationships), 15)
         self.assertEqual(len(project["viewpoints"]), 25)
+        self.assertEqual(sum(len(pairs) for pairs in project["rules"].values()), 5932)
+        self.assertEqual(len(project["proposalOrders"]), 9)
+        self.assertEqual(len(project["shapes"]), 6)
         self.assertEqual(relationships["Serving"]["notation"], "v")
         self.assertEqual(relationships["ReadAccess"]["parent"], "Access")
         self.assertEqual(relationships["ReadAccess"]["predicate"], "accesses")
         self.assertIn("ApplicationDomain", elements["ApplicationComponent"]["categories"])
+        self.assertEqual(relationships["Composition"]["style"], {"line": "solid", "source": "filled-diamond", "target": "none"})
 
 
 @unittest.skipUnless(NODE, "node is not installed")

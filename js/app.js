@@ -519,7 +519,7 @@
         h("div", { class: "row" },
           field("Fill", colorInput(() => n.fill, (v) => { n.fill = v; })),
           field("Line", colorInput(() => n.stroke, (v) => { n.stroke = v; })),
-          field("Shape", select(core.SHAPES.map((s) => ({ value: s, label: s })), () => n.shape || "rectangle", (v) => { n.shape = v; })),
+          field("Shape", shapeSelect(() => n.shape, (v) => { n.shape = v; })),
           h("div", { style: { marginLeft: "12px" } }, shapeSvg(n, 90, 54, e.label || e.id)))),
       h("div", { style: { marginTop: "14px" } },
         h("h3", {}, "Usage"),
@@ -555,6 +555,23 @@
     return c;
   }
 
+  /** Core-vis shapes, the built-in own shapes and the project's own shapes (SReq 6.3, 6.5). */
+  function shapeSelect(get, set) {
+    const groups = [["Core-vis", "core"], ["Built in", "builtin"], ["Own", "own"]];
+    const choices = core.shapeChoices(project);
+    const el = h("select", {}, groups.map(([label, kind]) => {
+      const opts = choices.filter((c) => c.kind === kind);
+      return opts.length ? h("optgroup", { label }, opts.map((o) => h("option", { value: o.value }, o.label))) : null;
+    }));
+    el.value = get() || "rectangle";
+    el.addEventListener("change", () => mutate(() => set(el.value)));
+    return el;
+  }
+
+  /**
+   * A preview of an element's figure. An own shape the studio builds in is drawn as itself; another is drawn as
+   * its fallback (tasks.md, Known limitations).
+   */
   function shapeSvg(n, w, hgt, label) {
     const ns = "http://www.w3.org/2000/svg";
     const svg = document.createElementNS(ns, "svg");
@@ -563,7 +580,18 @@
     const mk = (tag, attrs) => { const el = document.createElementNS(ns, tag); for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v); svg.appendChild(el); return el; };
     const common = { fill, stroke, "stroke-width": 1.4 };
     const p = 3, W = w - 2 * p, H = hgt - 2 * p;
-    switch (n.shape) {
+    const resolved = core.resolveShape(project, n.shape);
+    let figure = n.shape || "rectangle";
+    if (resolved && resolved.kind === "own") {
+      const builtin = resolved.builtin || (core.BUILTIN_SHAPES[resolved.id.toLowerCase()] ? resolved.id.toLowerCase() : "");
+      figure = builtin || resolved.definition.fallback || "rectangle";
+    }
+    switch (figure) {
+      case "octagon": {
+        const c = Math.min(10, H / 3);
+        mk("polygon", Object.assign({ points: `${p + c},${p} ${w - p - c},${p} ${w - p},${p + c} ${w - p},${hgt - p - c} ${w - p - c},${hgt - p} ${p + c},${hgt - p} ${p},${hgt - p - c} ${p},${p + c}` }, common));
+        break;
+      }
       case "rounded-rectangle": mk("rect", Object.assign({ x: p, y: p, width: W, height: H, rx: 10 }, common)); break;
       case "ellipse": mk("ellipse", Object.assign({ cx: w / 2, cy: hgt / 2, rx: W / 2, ry: H / 2 }, common)); break;
       case "circle": mk("circle", Object.assign({ cx: w / 2, cy: hgt / 2, r: Math.min(W, H) / 2 }, common)); break;
@@ -602,7 +630,7 @@
   function addRelationship() {
     const id = uniqueId("NewRelationship", "concept");
     mutate(() => {
-      project.relationships.push({ id, label: core.humanize(id), predicate: "relatesTo", predicateLabel: "", predicateDefinition: "", notation: "", parent: "", definition: "", scopeNote: "", changeNote: "", domain: [], range: [], categories: [], style: { line: "solid", arrow: "open" } });
+      project.relationships.push({ id, label: core.humanize(id), predicate: "relatesTo", predicateLabel: "", predicateDefinition: "", notation: "", parent: "", definition: "", scopeNote: "", changeNote: "", domain: [], range: [], categories: [], style: { line: "solid", source: "none", target: "open" } });
       ui.sel.relationships = id;
     });
   }
@@ -640,7 +668,8 @@
         h("h3", {}, "Notation"),
         h("div", { class: "row" },
           field("Line", select(core.LINE_STYLES.map((x) => ({ value: x, label: x })), () => s.line || "solid", (v) => { s.line = v; })),
-          field("Arrow head", select(core.ARROW_HEADS.map((x) => ({ value: x, label: x })), () => s.arrow || "open", (v) => { s.arrow = v; })),
+          field("Source end", select(decorationOptions(), () => s.source || "none", (v) => { s.source = v; })),
+          field("Target end", select(decorationOptions(), () => s.target || "open", (v) => { s.target = v; })),
           field("Colour", colorInput(() => s.stroke || "#333333", (v) => { s.stroke = v; })),
           lineSvg(s))),
       h("div", { style: { marginTop: "14px" } },
@@ -649,23 +678,38 @@
           h("a", { href: "#", onclick: (ev) => { ev.preventDefault(); ui.matrixRel = r.id; go("rules"); } }, "Edit in the matrix"))));
   }
 
+  /** The line ends core-vis decorates either end of a line with (SReq 6.4). */
+  const DECORATION_LABELS = {
+    none: "none", open: "open arrowhead", filled: "filled arrowhead", "hollow-triangle": "hollow triangle",
+    diamond: "hollow diamond", "filled-diamond": "filled diamond", circle: "dot", half: "half arrowhead",
+  };
+  const decorationOptions = () => core.DECORATIONS.map((x) => ({ value: x, label: DECORATION_LABELS[x] || x }));
+
   function lineSvg(s) {
     const ns = "http://www.w3.org/2000/svg";
     const svg = document.createElementNS(ns, "svg");
     svg.setAttribute("width", 130); svg.setAttribute("height", 30); svg.setAttribute("viewBox", "0 0 130 30");
     const color = s.stroke || "currentColor";
     const line = document.createElementNS(ns, "line");
-    Object.entries({ x1: 8, y1: 15, x2: 112, y2: 15, stroke: color, "stroke-width": 1.6, "stroke-dasharray": s.line === "dashed" ? "6 4" : s.line === "dotted" ? "1.5 3" : "" }).forEach(([k, v]) => line.setAttribute(k, v));
+    Object.entries({ x1: 10, y1: 15, x2: 118, y2: 15, stroke: color, "stroke-width": 1.6, "stroke-dasharray": s.line === "dashed" ? "6 4" : s.line === "dotted" ? "1.5 3" : "" }).forEach(([k, v]) => line.setAttribute(k, v));
     svg.appendChild(line);
-    const head = document.createElementNS(ns, "path");
-    const shapes = {
-      open: ["M104,9 L116,15 L104,21", "none"], filled: ["M104,9 L118,15 L104,21 Z", color],
-      "hollow-triangle": ["M104,8 L118,15 L104,22 Z", "var(--panel)"], diamond: ["M100,15 L109,10 L118,15 L109,20 Z", "var(--panel)"],
-      "filled-diamond": ["M100,15 L109,10 L118,15 L109,20 Z", color], circle: ["M112,15 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0", color], none: ["", "none"],
+    // Each marker is drawn with its tip at 0, pointing right: as it is at the target end, mirrored at the source.
+    const markers = {
+      open: ["M-12,-6 L0,0 L-12,6", "none"], filled: ["M-14,-6 L0,0 L-14,6 Z", color],
+      "hollow-triangle": ["M-14,-7 L0,0 L-14,7 Z", "var(--panel)"], diamond: ["M-18,0 L-9,-5 L0,0 L-9,5 Z", "var(--panel)"],
+      "filled-diamond": ["M-18,0 L-9,-5 L0,0 L-9,5 Z", color], circle: ["M-8,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0", color],
+      half: ["M-12,-6 L0,0", "none"], none: ["", "none"],
     };
-    const [d, fill] = shapes[s.arrow || "open"] || shapes.open;
-    head.setAttribute("d", d); head.setAttribute("fill", fill); head.setAttribute("stroke", color); head.setAttribute("stroke-width", 1.6);
-    svg.appendChild(head);
+    const end = (kind, x, mirrored) => {
+      const [d, fill] = markers[kind] || markers.none;
+      if (!d) return;
+      const path = document.createElementNS(ns, "path");
+      path.setAttribute("d", d); path.setAttribute("fill", fill); path.setAttribute("stroke", color); path.setAttribute("stroke-width", 1.6);
+      path.setAttribute("transform", `translate(${x},15)${mirrored ? " scale(-1,1)" : ""}`);
+      svg.appendChild(path);
+    };
+    end(s.target || "open", 118, false);
+    end(s.source || "none", 10, true);
     return svg;
   }
 
@@ -882,7 +926,6 @@
       }));
     };
     const sel = tax.categories.find((c) => c.id === ui.sel.taxonomy);
-    const orderList = project.proposalOrder;
     return h("div", {},
       pageHead("Taxonomy", "The SKOS concept scheme that classifies the concepts (arch:conceptClassification) — the groups a modelling tool's palette shows. Assign members here or on each element and relationship."),
       h("div", { class: "grid2" },
@@ -892,15 +935,51 @@
           h("button", { class: "btn small", style: { marginTop: "8px" }, onclick: () => addCategory("") }, "+ Top-level category")),
         h("div", {},
           sel ? categoryDetail(sel) : h("div", { class: "card empty" }, "Pick a category (✎) to edit its members."),
-          h("div", { class: "card" },
-            h("h3", {}, "Relationship proposal order"),
-            h("p", { class: "small muted" }, "arch:RelationshipProposalOrder — the order a modelling tool proposes relationship types when two elements are connected."),
-            h("ol", {}, orderList.map((id, i) => h("li", {}, h("div", { class: "row" },
-              h("span", {}, labelOf(id)), h("span", { class: "spacer" }),
-              h("button", { class: "btn small ghost", disabled: i === 0, onclick: () => mutate(() => { orderList.splice(i - 1, 0, orderList.splice(i, 1)[0]); }), "aria-label": "Move up" }, "↑"),
-              h("button", { class: "btn small ghost", disabled: i === orderList.length - 1, onclick: () => mutate(() => { orderList.splice(i + 1, 0, orderList.splice(i, 1)[0]); }), "aria-label": "Move down" }, "↓"),
-              h("button", { class: "btn small ghost", onclick: () => mutate(() => orderList.splice(i, 1)), "aria-label": "Remove" }, "×"))))),
-            chips(() => [], (v) => { project.proposalOrder = orderList.concat(v.filter((x) => !orderList.includes(x))); }, relationshipOptions().filter((o) => !orderList.includes(o.value)), { placeholder: "Append relationship…" })))));
+          proposalOrdersCard())));
+  }
+
+  /** The relationship proposal orders (SReq 4.2–4.3, SD-4). */
+  function proposalOrdersCard() {
+    const orders = project.proposalOrders;
+    return h("div", { class: "card" },
+      h("div", { class: "row" }, h("h3", {}, "Relationship proposal orders"), h("span", { class: "spacer" }),
+        h("button", { class: "btn small", onclick: addProposalOrder }, "+ Order")),
+      h("p", { class: "small muted" }, "The orders in which a modelling tool proposes relationship types when two elements are connected (arch:relationshipProposalOrder). "
+        + "One with no source or target types is the general order, which applies to every pair; a metamodel has one. "
+        + "One that names source or target types applies where the source or the target is of one of them, or of a subtype, and its places win over the general order's."),
+      orders.length ? orders.map(proposalOrderEditor) : h("p", { class: "muted small" }, "No proposal order yet."));
+  }
+
+  function proposalOrderEditor(o) {
+    const list = o.members;
+    const scoped = o.domain.length || o.range.length;
+    return h("div", { class: "card", style: { boxShadow: "none" } },
+      h("div", { class: "detail-head" },
+        h("h2", {}, o.label || (scoped ? core.humanize(o.id) : "General order")),
+        h("span", { class: "pill" }, scoped ? "scoped" : "general"),
+        h("button", { class: "btn danger small", onclick: () => { if (confirm(`Delete proposal order ${o.id}?`)) mutate(() => core.removeRef(project, o.id, "proposalOrders")); } }, "Delete")),
+      inlineIssues("taxonomy", o.id),
+      h("div", { class: "grid2" },
+        idField("taxonomy", "taxonomy", o, "Order"),
+        field("Label", textInput(() => o.label, (v) => { o.label = v; }, { placeholder: scoped ? core.humanize(o.id) : `${project.meta.title} relationship proposal order` })),
+        field("Source types (arch:domainIncludes)", chips(() => o.domain, (v) => { o.domain = v; }, elementOptions(true), { free: curieRe, placeholder: "Any source…" })),
+        field("Target types (arch:rangeIncludes)", chips(() => o.range, (v) => { o.range = v; }, elementOptions(true), { free: curieRe, placeholder: "Any target…" }))),
+      h("ol", {}, list.map((id, i) => h("li", {}, h("div", { class: "row" },
+        h("span", {}, labelOf(id)), h("span", { class: "spacer" }),
+        h("button", { class: "btn small ghost", disabled: i === 0, onclick: () => mutate(() => { list.splice(i - 1, 0, list.splice(i, 1)[0]); }), "aria-label": "Move up" }, "↑"),
+        h("button", { class: "btn small ghost", disabled: i === list.length - 1, onclick: () => mutate(() => { list.splice(i + 1, 0, list.splice(i, 1)[0]); }), "aria-label": "Move down" }, "↓"),
+        h("button", { class: "btn small ghost", onclick: () => mutate(() => list.splice(i, 1)), "aria-label": "Remove" }, "×"))))),
+      chips(() => [], (v) => { o.members = list.concat(v.filter((x) => !list.includes(x))); }, relationshipOptions().filter((opt) => !list.includes(opt.value)), { placeholder: "Append relationship…" }));
+  }
+
+  function addProposalOrder() {
+    const hasGeneral = project.proposalOrders.some((o) => !o.domain.length && !o.range.length);
+    const id = uniqueId(hasGeneral ? "NewProposalOrder" : "ProposalOrder", "taxonomy");
+    mutate(() => project.proposalOrders.push({
+      id, label: "", definition: "", scopeNote: "", domain: [], range: [],
+      // A new general order starts with every relationship type, to be put in order.
+      members: hasGeneral ? [] : project.relationships.map((r) => r.id),
+    }));
   }
 
   function addCategory(parent) {
@@ -1092,13 +1171,13 @@
     if (rest.length) groups.push([groups.length ? "Other" : "Elements", rest]);
     const sel = project.elements.find((e) => e.id === ui.sel.notation);
     return h("div", {},
-      pageHead("Notation", "The default visual notation (archvis:NotationSet) — the palette a modelling tool builds from the metamodel. Click an element to restyle it."),
+      pageHead("Notation", "The default visual notation (arch-vis:NotationSet) — the palette a modelling tool builds from the metamodel. Click an element to restyle it."),
       sel ? h("div", { class: "card" },
         h("div", { class: "row" }, h("strong", {}, sel.label || sel.id),
           field("Fill", colorInput(() => sel.notation.fill, (v) => { sel.notation.fill = v; })),
           field("Line", colorInput(() => sel.notation.stroke, (v) => { sel.notation.stroke = v; })),
           field("Text", colorInput(() => sel.notation.font || "#1d2330", (v) => { sel.notation.font = v; })),
-          field("Shape", select(core.SHAPES.map((s) => ({ value: s, label: s })), () => sel.notation.shape || "rectangle", (v) => { sel.notation.shape = v; })),
+          field("Shape", shapeSelect(() => sel.notation.shape, (v) => { sel.notation.shape = v; })),
           h("button", { class: "btn small", onclick: () => {
             const cat = sel.categories[0];
             if (!cat) { toast("This element is in no category."); return; }
@@ -1109,7 +1188,43 @@
           shapeSvg(e.notation || {}, 120, 60, ""), h("span", {}, e.label || e.id)))))),
       h("div", { class: "card" }, h("h3", {}, "Relationships"),
         h("div", { class: "palette" }, project.relationships.map((r) => h("div", { class: "swatch", role: "button", tabindex: "0", onclick: () => go("relationships", r.id) }, lineSvg(r.style || {}), h("span", {}, `${r.notation ? r.notation + " · " : ""}${r.label || r.id}`))))),
-      h("p", { class: "small muted" }, "The notation document uses archvis:NotationSet, archvis:Style and its colour properties as the converters do; the per-concept descriptor terms (archvis:VisualNotation, notationFor, defaultStyle, shape, lineStyle, arrowHead) should be checked against core-vis before publishing."));
+      ownShapesCard(),
+      h("p", { class: "small muted" }, "Written in core-vis terms: each descriptor (arch-vis:VisualNotation) has an arch-vis:Style with its shape type and colours, or for a relationship its line style, both line ends (arch-vis:sourceDecor, arch-vis:targetDecor) and colour. A figure core-vis does not define is declared as an own arch-vis:ShapeType, which a modeller draws, or draws as its fallback."));
+  }
+
+  /** Own shapes (SReq 6.5, SD-3): figures core-vis does not define, with a core fallback and path templates. */
+  function ownShapesCard() {
+    const sel = project.shapes.find((s) => s.id === ui.sel.shapes);
+    const used = (id) => project.elements.filter((e) => !e.abstract && e.notation && e.notation.shape === id).length;
+    return h("div", { class: "card" },
+      h("div", { class: "row" }, h("h3", {}, "Own shapes"), h("span", { class: "spacer" }),
+        h("button", { class: "btn small", onclick: addShape }, "+ Shape")),
+      h("p", { class: "small muted" }, "Declared in the notation document as arch-vis:ShapeType: a core fallback, and the geometry as SVG path templates whose numbers may be {expressions} over w, h and the variables. "
+        + "Cylinder and folder are built in and declared when an element uses them; a shape here with the id Cylinder or Folder replaces them."),
+      project.shapes.length
+        ? h("div", { class: "row" }, project.shapes.map((s) => h("button", { class: "btn small" + (sel && sel.id === s.id ? " primary" : ""), title: `${used(s.id)} element type(s) use it`, onclick: () => { ui.sel.shapes = s.id; render(); } }, `${s.label || s.id} · ${used(s.id)}`)))
+        : h("p", { class: "muted small" }, "None: every element uses a core-vis or a built-in shape."),
+      sel ? h("div", { style: { marginTop: "12px" } },
+        inlineIssues("notation", sel.id),
+        h("div", { class: "grid2" },
+          idField("shapes", "notation", sel, "Shape"),
+          field("Label", textInput(() => sel.label, (v) => { sel.label = v; })),
+          field("Fallback", select(Object.keys(core.CORE_SHAPES).map((x) => ({ value: x, label: x })), () => sel.fallback || "rectangle", (v) => { sel.fallback = v; }), "Drawn by a modeller that cannot draw the templates"),
+          field("Variables", textInput(() => sel.variables, (v) => { sel.variables = v; }, { class: "mono", placeholder: "b = min(h * 0.2, 12)" })),
+          field("Outline path", textInput(() => sel.outline, (v) => { sel.outline = v; }, { class: "mono", placeholder: "M0,0 L{w},0 L{w},{h} L0,{h} Z" }), "Filled and stroked", "span2"),
+          field("Detail path", textInput(() => sel.detail, (v) => { sel.detail = v; }, { class: "mono" }), "Inner lines, stroked only", "span2"),
+          field("Content box", textInput(() => sel.contentBox, (v) => { sel.contentBox = v; }, { class: "mono", placeholder: "x y width height" })),
+          field("Label box", textInput(() => sel.labelBox, (v) => { sel.labelBox = v; }, { class: "mono", placeholder: "x y width height" })),
+          field("Definition", textArea(() => sel.definition, (v) => { sel.definition = v; }, 2), null, "span2")),
+        h("div", { class: "row", style: { marginTop: "8px" } }, deleteButton("shapes", "shapes", sel, "shape"))) : null);
+  }
+
+  function addShape() {
+    const id = uniqueId("NewShape", "notation");
+    mutate(() => {
+      project.shapes.push({ id, label: core.humanize(id), definition: "", fallback: "rectangle", variables: "", outline: "M0,0 L{w},0 L{w},{h} L0,{h} Z", detail: "", contentBox: "", labelBox: "" });
+      ui.sel.shapes = id;
+    });
   }
 
   // ------------------------------------------------------------------ output
@@ -1171,10 +1286,16 @@
     const counts = ["error", "warning", "info"].map((l) => `${issues.filter((i) => i.level === l).length} ${l}${l === "info" ? "" : "s"}`).join(" · ");
     return h("div", {},
       pageHead("Checks", `Errors make the generated documents wrong; warnings are probably unintended; info is worth a look. ${counts}.`),
-      issues.length ? issues.map((i) => h("button", { class: "issue " + i.level, onclick: () => go(i.tab, i.id || ui.sel[i.tab]) }, h("span", { class: "lvl" }, i.level), h("span", {}, i.message)))
+      issues.length ? issues.map((i) => h("button", { class: "issue " + i.level, onclick: () => openFinding(i) }, h("span", { class: "lvl" }, i.level), h("span", {}, i.message)))
         : h("div", { class: "card empty" }, "No findings."));
   }
 
+  /** Open the item a finding is about. On the Notation page that is an own shape; on Taxonomy, a category or an order. */
+  function openFinding(i) {
+    if (i.tab === "notation" && project.shapes.some((s) => s.id === i.id)) { ui.sel.shapes = i.id; go("notation"); return; }
+    if (i.tab === "taxonomy" && project.proposalOrders.some((o) => o.id === i.id)) { go("taxonomy"); return; }
+    go(i.tab, i.id || ui.sel[i.tab]);
+  }
   const VIEWS = {
     overview: viewOverview, elements: viewElements, relationships: viewRelationships, attributes: viewAttributes,
     rules: viewRules, taxonomy: viewTaxonomy, viewpoints: viewViewpoints, stakeholders: viewStakeholders,

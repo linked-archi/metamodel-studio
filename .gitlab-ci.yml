@@ -1,0 +1,74 @@
+# The studio's pipeline (design.md, SD-11).
+#
+# A merge request, and the default branch: npm test, the Python tests and the
+# command line (check). The default branch then puts the page in place at
+# https://app.linked.archi/metamodel-studio/ (deploy). The engine's package comes
+# with A2.
+#
+# The kernel checks (npm run test:kernel) are not here. They need
+# @linked-archi/kernel, which is not published yet, so they run locally until it
+# is (SReq 9.5, SD-7).
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+check:
+  image: node:22
+  # A newer push to the same merge request or branch cancels what is still running.
+  interruptible: true
+  variables:
+    DEBIAN_FRONTEND: noninteractive
+    PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    PYTHONDONTWRITEBYTECODE: "1"
+  before_script:
+    # The image's Python is Debian's, without pip. A virtual environment brings
+    # it, for the Python tests' pyoxigraph and pyshacl; npm test and the command
+    # line install nothing.
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends python3-venv > /dev/null
+    - python3 -m venv /opt/venv
+    - /opt/venv/bin/pip install --quiet -r requirements-dev.txt
+  script:
+    - npm test
+    - /opt/venv/bin/python -m unittest discover -s tests -v
+    # A starting point generates, and passes its own checks.
+    - node scripts/cli.js template cloudplatform -o /tmp/cp.json
+    - node scripts/cli.js generate /tmp/cp.json -o /tmp/out
+    - node scripts/cli.js lint /tmp/cp.json
+
+# The page, onto the server that serves app.linked.archi (the host of
+# meta.linked.archi) over SSH, as la-gram's web-deploy puts la-gram there. Only
+# what the browser loads goes, and files no longer there are taken away. The
+# host's nginx serves the folder under /metamodel-studio/ (README.md, "Deploying").
+#
+# CI/CD variables (Settings → CI/CD → Variables), as la-gram's deploy has, each
+# protected and scoped to the environment production, so only this job sees them:
+#   DEPLOY_SSH_KEY       the deploy user's private SSH key (type File)
+#   DEPLOY_HOST          the server (app.linked.archi)
+#   DEPLOY_USER          the SSH user (deploy)
+#   STUDIO_DEPLOY_PATH   the folder nginx serves as /metamodel-studio/
+#                        (/var/www/linked-archi-app/metamodel-studio)
+deploy:
+  stage: deploy
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  needs: [check]
+  image: alpine:3.22
+  # Never cancelled half-way, and one deploy at a time.
+  interruptible: false
+  resource_group: app-linked-archi
+  environment:
+    name: production
+    url: https://app.linked.archi/metamodel-studio/
+  before_script:
+    - apk add --no-cache openssh-client rsync
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - cp "$DEPLOY_SSH_KEY" ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
+    - ssh-keyscan -t ed25519,ecdsa,rsa "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+  script:
+    - test -n "$STUDIO_DEPLOY_PATH" || { echo "STUDIO_DEPLOY_PATH is not set (README.md, Deploying)"; exit 1; }
+    - mkdir -p public
+    - cp -r index.html styles.css js vendor templates LICENSE NOTICE public/
+    - echo "Deploying to $DEPLOY_USER@$DEPLOY_HOST:$STUDIO_DEPLOY_PATH"
+    - rsync -az --delete --chmod=D755,F644 public/ "$DEPLOY_USER@$DEPLOY_HOST:$STUDIO_DEPLOY_PATH/"

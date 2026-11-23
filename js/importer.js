@@ -5,13 +5,24 @@
  * manifest — any subset, in any order) back into a studio project, so a published
  * metamodel such as ArchiMate 4.0 can be used as the starting point for a new one.
  *
- * Needs N3.js (vendor/n3.min.js): window.N3 in the browser, require() under Node.
+ * Needs N3.js (vendor/n3.min.js, the browser bundle of N3.js 2.13.12): window.N3 in the browser. Under Node the
+ * same file is evaluated inside a function and N3 taken from it, so there is no global and nothing to install
+ * (SD-8).
  */
 (function (root, factory) {
   if (typeof module === "object" && module.exports) {
-    module.exports = factory(require("./core.js"), require("../vendor/n3.min.js"));
+    module.exports = factory(require("./core.js"), loadN3());
   } else {
     root.LAStudio = Object.assign(root.LAStudio || {}, { importer: factory(root.LAStudio.core, root.N3) });
+  }
+
+  function loadN3() {
+    const fs = require("fs");
+    const path = require("path");
+    const vm = require("vm");
+    const file = path.join(__dirname, "..", "vendor", "n3.min.js");
+    const code = fs.readFileSync(file, "utf8");
+    return vm.runInThisContext(`(function () {\n${code}\nreturn N3;\n})`, { filename: file })();
   }
 })(typeof self !== "undefined" ? self : this, function (core, N3) {
   "use strict";
@@ -26,6 +37,7 @@
   const BIBO = "http://purl.org/ontology/bibo/";
   const ARCH = "https://meta.linked.archi/core#";
   const ARCHVP = "https://meta.linked.archi/core-viewpoints#";
+  const VIS = core.VIS;
 
   class Graph {
     constructor() {
@@ -161,7 +173,7 @@
     m.slug = (baseIri.replace(/\/$/, "").split("/").pop() || prefix).toLowerCase().replace(/[^a-z0-9.-]+/g, "-");
     m.lang = lang;
     const own = core.namespaces(project);
-    const ownNs = { concept: own[prefix], taxonomy: own[prefix + "tax"], viewpoint: own[prefix + "vp"] };
+    const ownNs = { concept: own[prefix], taxonomy: own[prefix + "tax"], viewpoint: own[prefix + "vp"], notation: own[prefix + "not"] };
 
     function ref(iri, scope) {
       if (ownNs[scope] && iri.startsWith(ownNs[scope]) && /^[A-Za-z_][A-Za-z0-9_-]*$/.test(iri.slice(ownNs[scope].length))) {
@@ -310,27 +322,79 @@
       }
     }
 
-    // ---- notation (archvis:VisualNotation descriptors)
-    const VIS = "https://meta.linked.archi/core-vis#";
+    // ---- the manifest: found here, as it names the notation set and the proposal orders
+    const manifests = g.subjects(RDF + "type", ARCH + "Metamodel");
+    const manifest = manifests.find((mm) => g.iris(mm, ARCH + "modelConcepts").some((o) => o === ns || o === ontologyIri))
+      || (manifests.length === 1 ? manifests[0] : null);
+
+    // ---- notation (SReq 7.2–7.3, SD-2, SD-3): core-vis terms, own shapes, and the studio's earlier terms
+    const sets = g.subjects(RDF + "type", VIS + "NotationSet");
+    const notationSet = (manifest && g.iris(manifest, ARCH + "notationSet")[0])
+      || sets.find((s) => s.startsWith(ownNs.notation)) || (sets.length === 1 ? sets[0] : null);
+    if (notationSet && notationSet.startsWith(ownNs.notation) && core.LOCAL_NAME.test(notationSet.slice(ownNs.notation.length))) {
+      m.notationSetName = notationSet.slice(ownNs.notation.length);
+    }
+    const undeclaredShapes = new Set();
+    const ownShape = (iri) => {
+      const outline = g.text(iri, VIS + "outlinePath");
+      const fallback = core.SHAPE_NAMES[localOf(g.iris(iri, VIS + "fallbackShape")[0] || "")] || "";
+      if (!outline) {
+        if (!fallback) undeclaredShapes.add(iri);
+        return fallback;
+      }
+      const id = localOf(iri);
+      if (!core.LOCAL_NAME.test(id)) { undeclaredShapes.add(iri); return fallback; }
+      if (!project.shapes.some((s) => s.id === id)) {
+        project.shapes.push({
+          id, label: g.text(iri, SKOS + "prefLabel", lang), definition: g.text(iri, SKOS + "definition", lang),
+          fallback: fallback || "rectangle", variables: g.text(iri, VIS + "shapeVariables"), outline,
+          detail: g.text(iri, VIS + "detailPath"), contentBox: g.text(iri, VIS + "contentBox"), labelBox: g.text(iri, VIS + "labelBox"),
+        });
+      }
+      return id;
+    };
+    const shapeName = (iri) => (iri.startsWith(VIS) ? core.SHAPE_NAMES[iri.slice(VIS.length)] || "" : ownShape(iri));
+    const namedIn = (term, names) => (term && term.termType === "NamedNode" ? names[localOf(term.value)] || "" : "");
+
     for (const vn of g.subjects(RDF + "type", VIS + "VisualNotation")) {
+      const inSets = g.iris(vn, VIS + "inNotationSet");
+      if (notationSet && inSets.length && !inSets.includes(notationSet)) continue;
       const target = g.iris(vn, VIS + "notationFor")[0];
       if (!target || !inNs(target)) continue;
       const id = target.slice(ns.length);
-      const style = g.objects(vn, VIS + "defaultStyle")[0];
-      const colour = (p) => (style ? g.text(style.value, VIS + p) : "");
+      // A value on the default style wins over one on the descriptor, as the kernel reads them.
+      const styles = g.objects(vn, VIS + "defaultStyle").map((o) => o.value);
+      const read = (prop) => {
+        for (const s of styles) { const o = g.objects(s, VIS + prop)[0]; if (o) return o; }
+        return g.objects(vn, VIS + prop)[0];
+      };
+      const literal = (prop) => { const o = read(prop); return o && o.termType === "Literal" ? o.value : ""; };
       const e = project.elements.find((x) => x.id === id);
       const r = project.relationships.find((x) => x.id === id);
       if (e) {
-        e.notation = {};
-        for (const [k, p] of [["fill", "fillColor"], ["stroke", "lineColor"], ["font", "fontColor"]]) if (colour(p)) e.notation[k] = colour(p);
-        if (g.text(vn, VIS + "shape")) e.notation.shape = g.text(vn, VIS + "shape");
+        const n = {};
+        for (const [k, p] of [["fill", "fillColor"], ["stroke", "lineColor"], ["font", "fontColor"]]) if (literal(p)) n[k] = literal(p);
+        const shape = read("shapeType");
+        const legacy = g.text(vn, VIS + "shape");
+        if (shape && shape.termType === "NamedNode") { const name = shapeName(shape.value); if (name) n.shape = name; }
+        else if (core.SHAPES.includes(legacy)) n.shape = legacy;
+        e.notation = n;
       } else if (r) {
-        r.style = {};
-        if (g.text(vn, VIS + "lineStyle")) r.style.line = g.text(vn, VIS + "lineStyle");
-        if (g.text(vn, VIS + "arrowHead")) r.style.arrow = g.text(vn, VIS + "arrowHead");
-        if (colour("lineColor")) r.style.stroke = colour("lineColor");
+        const s = {};
+        const line = read("lineStyle");
+        const lineName = line && line.termType === "Literal" ? (core.LINE_STYLES.includes(line.value) ? line.value : "") : namedIn(line, core.LINE_STYLE_NAMES);
+        if (lineName) s.line = lineName;
+        const source = namedIn(read("sourceDecor"), core.DECORATION_NAMES);
+        if (source) s.source = source;
+        const targetEnd = namedIn(read("targetDecor"), core.DECORATION_NAMES) || (core.DECORATIONS.includes(g.text(vn, VIS + "arrowHead")) ? g.text(vn, VIS + "arrowHead") : "");
+        if (targetEnd) s.target = targetEnd;
+        if (literal("lineColor")) s.stroke = literal("lineColor");
+        r.style = s;
       }
     }
+    // An own shape no element uses is the project's too.
+    for (const iri of g.subjects(RDF + "type", VIS + "ShapeType")) if (iri.startsWith(ownNs.notation)) ownShape(iri);
+    for (const iri of undeclaredShapes) report.push(`Shape ${iri} is not declared in the documents: its elements are drawn as rectangles.`);
 
     // ---- external concepts referenced by rules (so they show up in the matrix)
     const ext = new Set();
@@ -365,10 +429,24 @@
         }
       }
     }
-    for (const order of g.subjects(RDF + "type", ARCH + "RelationshipProposalOrder")) {
-      if (g.objects(order, ARCH + "domainIncludes").length || g.objects(order, ARCH + "rangeIncludes").length) continue;
+    // ---- proposal orders (SReq 7.2–7.3, SD-4): those the manifest names; earlier studio output typed its one
+    // arch:RelationshipProposalOrder instead, a class core 0.6.0 no longer has.
+    const named = manifest ? g.iris(manifest, ARCH + "relationshipProposalOrder") : [];
+    for (const order of named.length ? named : g.subjects(RDF + "type", ARCH + "RelationshipProposalOrder")) {
+      const id = ref(order, "taxonomy");
+      if (!core.LOCAL_NAME.test(id)) { report.push(`Proposal order ${order} is outside ${ownNs.taxonomy}: it was left out.`); continue; }
       const members = g.objects(order, SKOS + "memberList").flatMap((h) => g.list(h)).map((o) => ref(o.value, "concept"));
-      if (members.length) project.proposalOrder = members.filter((x) => relIds.has(x));
+      const kept = members.filter((x) => relIds.has(x));
+      if (kept.length < members.length) report.push(`Proposal order ${id}: ${members.length - kept.length} member(s) are not relationship types of ${ns} and were left out.`);
+      project.proposalOrders.push({
+        id,
+        label: g.text(order, SKOS + "prefLabel", lang),
+        definition: g.text(order, SKOS + "definition", lang),
+        scopeNote: g.text(order, SKOS + "scopeNote", lang),
+        members: kept,
+        domain: g.iris(order, ARCH + "domainIncludes").map((x) => ref(x, "concept")),
+        range: g.iris(order, ARCH + "rangeIncludes").map((x) => ref(x, "concept")),
+      });
     }
 
     // ---- viewpoints
@@ -406,9 +484,6 @@
     }
 
     // ---- manifest
-    const manifests = g.subjects(RDF + "type", ARCH + "Metamodel");
-    const manifest = manifests.find((mm) => g.iris(mm, ARCH + "modelConcepts").some((o) => o === ns || o === ontologyIri))
-      || (manifests.length === 1 ? manifests[0] : null);
     if (manifest) {
       m.name = core.LOCAL_NAME.test(localOf(manifest)) ? localOf(manifest) : m.name;
       const label = g.text(manifest, SKOS + "prefLabel", lang);
@@ -420,6 +495,8 @@
       if (fw) m.frameworkLabel = g.text(fw, SKOS + "prefLabel", lang);
     }
 
+    // The default name needs no saying (SD-10).
+    if (m.notationSetName === `${m.name}StandardNotation`) m.notationSetName = "";
     m.imports = [...usedImports].filter(([p]) => p !== prefix).map(([p, n]) => ({ prefix: p, namespace: n }));
     m.assets = {
       shapes: true,
@@ -432,10 +509,11 @@
       `Namespace ${ns} (prefix ${prefix}).`,
       `${project.elements.length} element types (${project.elements.filter((e) => e.abstract).length} abstract), ${project.relationships.length} relationship types, ${project.attributes.length} attributes.`,
       `${ruleCount} relationship rules from SHACL shapes.`,
-      `${project.taxonomy.categories.length} taxonomy categories, ${project.viewpoints.length} viewpoints in ${project.viewpointCategories.length} categories, ${project.stakeholders.length} stakeholders, ${project.concerns.length} concerns, ${project.purposes.length} purposes.`,
+      `${project.taxonomy.categories.length} taxonomy categories, ${project.proposalOrders.length} proposal orders, ${project.viewpoints.length} viewpoints in ${project.viewpointCategories.length} categories, ${project.stakeholders.length} stakeholders, ${project.concerns.length} concerns, ${project.purposes.length} purposes.`,
+      `Notation: ${project.elements.filter((e) => e.notation && Object.keys(e.notation).length).length} element and ${project.relationships.filter((r) => r.style && Object.keys(r.style).length).length} relationship descriptors, ${project.shapes.length} own shapes.`,
     );
     return { project: core.normalize(project), report };
   }
 
-  return { importTurtle, parseAll };
+  return { importTurtle, parseAll, N3 };
 });

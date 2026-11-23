@@ -1,16 +1,24 @@
 # Fixtures
 
-Extracts of documents published at meta.linked.archi (linked-archi-meta, CC-BY-4.0),
-copied from the linked-archi-apm repository's `fixtures/`. They are test inputs and the
-source of the ArchiMate 4.0 template (`scripts/build-templates.js`).
+Byte-identical copies of documents published at meta.linked.archi (the linked-archi-meta repository), under the
+licences they state, mostly CC-BY-4.0. They are test inputs and the source of the ArchiMate 4.0 template
+(`scripts/build-templates.js`).
 
-| File | Origin |
-|---|---|
-| `archimate4-onto.ttl`, `archimate4-viewpoints.ttl` | ArchiMate 4.0 ontology and viewpoints, minus statements citing a source elsewhere |
-| `archimate3.2-onto.ttl`, `archimate3.2-viewpoints.ttl` | The same for ArchiMate 3.2 |
-| `core-onto.ttl` | The Linked.Archi core ontology (`arch:`), which defines `arch:Metamodel` and its properties |
-| `shapes.ttl` | Selected published SHACL: one ArchiMate 3.2 relationship shape, and the Backstage, C4 and LeanIX manifests and shapes |
+| File | What it is | Used by |
+|---|---|---|
+| `core/core-onto.ttl`, `core/core-vis-onto.ttl` | The core ontology (`arch:`) and core-vis (`arch-vis:`) | the check that every term the generator writes is declared |
+| `archimate4/archimate4-onto.ttl`, `-tax.ttl`, `-viewpoints.ttl`, `-notation.ttl`, `-metamodel.ttl`, `-relationship-shapes.ttl` | ArchiMate 4.0 | the ArchiMate 4.0 template, the import tests |
+| `archimate4/archimate4-relationship-tables.ttl` | ArchiMate 4.0's relationship tables, RDF 1.2 | the check that triple terms parse |
 
-They carry no ArchiMate 4.0 SHACL shapes, so the ArchiMate 4.0 template's rule matrix
-starts empty. After replacing a fixture, run `npm run templates`; a test fails while the
-committed templates are stale.
+They are copied from the installed `@linked-archi/kernel` package, whose `assets/` are byte-identical to
+meta.linked.archi. Do not edit them. To refresh them:
+
+```bash
+npm install                      # once: the kernel is a development dependency
+npm run fixtures                 # copy what differs
+npm run fixtures -- --check      # compare only
+npm run templates                # then rebuild the templates
+```
+
+A test fails while the committed templates are stale, and the kernel checks (`npm run test:kernel`) fail while a
+fixture differs from the kernel's copy.

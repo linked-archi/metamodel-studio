@@ -67,6 +67,18 @@
       if (e.abstract && !Array.from(core.descendants(project, e.id)).some((d) => d !== e.id)) add("info", "elements", e.id, `${e.id} is abstract and nothing specializes it.`);
       const n = e.notation || {};
       for (const k of ["fill", "stroke", "font"]) if (n[k] && !/^#[0-9a-fA-F]{6}$/.test(n[k])) add("warning", "elements", e.id, `${e.id}: ${k} colour "${n[k]}" is not #rrggbb.`);
+      if (n.shape && !core.resolveShape(project, n.shape)) add("error", "elements", e.id, `${e.id}: shape "${n.shape}" is neither a core-vis shape nor an own shape.`);
+    }
+
+    // ---- own shapes (SReq 6.5)
+    const notationNames = new Set([core.notationSetName(project)]
+      .concat(project.elements.map((e) => `${e.id}Notation`), project.relationships.map((r) => `${r.id}Notation`)));
+    if (m.notationSetName && !core.LOCAL_NAME.test(m.notationSetName)) add("error", "notation", "", `Notation set name "${m.notationSetName}" is not a valid local name.`);
+    for (const s of project.shapes) {
+      checkId("notation", s, "Shape");
+      if (!s.outline) add("error", "notation", s.id, `Shape ${s.id} has no outline path, so nothing can draw it.`);
+      if (s.fallback && !core.CORE_SHAPES[s.fallback]) add("error", "notation", s.id, `Shape ${s.id}: fallback "${s.fallback}" is not a core-vis shape.`);
+      if (notationNames.has(s.id)) add("error", "notation", s.id, `Shape ${s.id} has the IRI of a notation descriptor or of the notation set.`);
     }
 
     // ---- relationships
@@ -85,6 +97,10 @@
       for (const d of r.domain) checkRef("relationships", r.id, d, `Domain of ${r.id}`, ["element"]);
       for (const d of r.range) checkRef("relationships", r.id, d, `Range of ${r.id}`, ["element"]);
       for (const c of r.categories) if (!project.taxonomy.categories.some((x) => x.id === c)) add("error", "relationships", r.id, `${r.id}: taxonomy category "${c}" does not exist.`);
+      const st = r.style || {};
+      if (st.line && !core.LINE_STYLES.includes(st.line)) add("error", "relationships", r.id, `${r.id}: line style "${st.line}" is not one of ${core.LINE_STYLES.join(", ")}.`);
+      for (const end of ["source", "target"]) if (st[end] && !core.DECORATIONS.includes(st[end])) add("error", "relationships", r.id, `${r.id}: ${end} end "${st[end]}" is not one of ${core.DECORATIONS.join(", ")}.`);
+      if (st.stroke && !/^#[0-9a-fA-F]{6}$/.test(st.stroke)) add("warning", "relationships", r.id, `${r.id}: colour "${st.stroke}" is not #rrggbb.`);
       // Child rules should stay inside the parent's (an instance of the child is one of the parent).
       const parent = relById.get(r.parent);
       if (parent && (project.rules[parent.id] || []).length && (project.rules[r.id] || []).length) {
@@ -127,7 +143,19 @@
       if (c.parent && !project.taxonomy.categories.some((x) => x.id === c.parent)) add("error", "taxonomy", c.id, `Category ${c.id}: parent "${c.parent}" does not exist.`);
       if (hasCycle(project.taxonomy.categories, c.id)) add("error", "taxonomy", c.id, `Category ${c.id} is its own ancestor.`);
     }
-    for (const id of project.proposalOrder) if (!relById.has(id)) add("error", "taxonomy", "", `Proposal order names unknown relationship "${id}".`);
+    // ---- proposal orders (SReq 4.2–4.3)
+    const general = project.proposalOrders.filter((o) => !o.domain.length && !o.range.length);
+    if (general.length > 1) add("warning", "taxonomy", general[1].id, `${general.length} proposal orders apply to every pair (${general.map((o) => o.id).join(", ")}); a metamodel has one general order, and the others should name the types they apply to.`);
+    if (project.proposalOrders.length && !m.assets.taxonomy) add("warning", "taxonomy", "", "Proposal orders are written in the taxonomy document, which is not shipped: they will be left out.");
+    for (const o of project.proposalOrders) {
+      checkId("taxonomy", o, "Proposal order");
+      if (!o.members.length) add("warning", "taxonomy", o.id, `Proposal order ${o.id} lists no relationship type; it is not written.`);
+      for (const id of o.members) if (!relById.has(id)) add("error", "taxonomy", o.id, `Proposal order ${o.id} names "${id}", which is not a relationship type.`);
+      const repeated = o.members.filter((id, i) => o.members.indexOf(id) !== i);
+      if (repeated.length) add("warning", "taxonomy", o.id, `Proposal order ${o.id} lists ${repeated[0]} more than once.`);
+      for (const d of o.domain) checkRef("taxonomy", o.id, d, `Source type of ${o.id}`, ["element"]);
+      for (const d of o.range) checkRef("taxonomy", o.id, d, `Target type of ${o.id}`, ["element"]);
+    }
 
     // ---- viewpoints
     const vpIds = (list) => new Set(list.map((x) => x.id));
@@ -165,7 +193,7 @@
   }
 
   function tabForScope(scope) {
-    return { concept: "elements", taxonomy: "taxonomy", viewpoint: "viewpoints" }[scope];
+    return { concept: "elements", taxonomy: "taxonomy", viewpoint: "viewpoints", notation: "notation" }[scope];
   }
 
   function hasCycle(list, id) {

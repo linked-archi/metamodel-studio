@@ -4,11 +4,21 @@
   "description": "Design complete Linked.Archi metamodels and export them as semantic asset sets (OWL, SHACL, SKOS, viewpoints, notation, arch:Metamodel manifest).",
   "license": "Apache-2.0",
   "private": true,
-  "bin": { "la-studio": "scripts/cli.js" },
+  "bin": {
+    "la-studio": "scripts/cli.js"
+  },
   "scripts": {
     "test": "node --test tests/studio.test.js",
+    "test:kernel": "vitest --run --config tests/kernel/vitest.config.mjs",
     "templates": "node scripts/build-templates.js",
+    "fixtures": "node scripts/sync-fixtures.mjs",
     "serve": "python3 -m http.server 8000"
   },
-  "engines": { "node": ">=18" }
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@linked-archi/kernel": "file:../linked-archi-kernel/linked-archi-kernel-0.0.0.tgz",
+    "vitest": "^4.1.12"
+  }
 }

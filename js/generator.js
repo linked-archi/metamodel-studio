@@ -104,12 +104,18 @@
     return v ? doc.lit(v, lang) : null;
   }
 
+  /**
+   * The root resource of a document and its metadata (SReq 1.2–1.3). `extra.scheme` makes it a plain
+   * skos:ConceptScheme (SD-5): no owl:Ontology, owl:imports, owl:versionIRI or owl:priorVersion, which are OWL
+   * ontology properties; owl:versionInfo is an annotation property and stays.
+   */
   function ontologyHeader(doc, project, iri, kind, extra) {
     const m = project.meta;
     const lang = m.lang || "en";
+    const scheme = !!(extra && extra.scheme);
     const pairs = [
-      ["a", extra && extra.types ? extra.types : [doc.ref("owl:Ontology")]],
-      [doc.ref("owl:imports"), (extra && extra.imports) || [doc.ref("arch:")]],
+      ["a", scheme ? [doc.ref("skos:ConceptScheme")] : extra && extra.types ? extra.types : [doc.ref("owl:Ontology")]],
+      [doc.ref("owl:imports"), scheme ? null : (extra && extra.imports) || [doc.ref("arch:")]],
       [doc.ref("vann:preferredNamespaceUri"), extra && extra.nsUri ? doc.lit(extra.nsUri) : null],
       [doc.ref("vann:preferredNamespacePrefix"), extra && extra.nsPrefix ? doc.lit(extra.nsPrefix) : null],
       [doc.ref("dct:title"), doc.lit(`${m.title} ${kind}`, lang)],
@@ -120,9 +126,9 @@
       [doc.ref("dct:created"), m.created ? doc.typed(m.created, "xsd:date") : null],
       [doc.ref("dct:modified"), m.modified ? doc.typed(m.modified, "xsd:date") : null],
       [doc.ref("bibo:status"), m.status ? doc.lit(m.status) : null],
-      [doc.ref("owl:versionIRI"), m.version ? doc.ref(`${iri.replace(/#$/, "")}/${m.version}#`) : null],
+      [doc.ref("owl:versionIRI"), m.version && !scheme ? doc.ref(`${iri.replace(/#$/, "")}/${m.version}#`) : null],
       [doc.ref("owl:versionInfo"), m.version ? doc.lit(m.version, lang) : null],
-      [doc.ref("owl:priorVersion"), extra && extra.priorVersion ? doc.ref(extra.priorVersion) : null],
+      [doc.ref("owl:priorVersion"), extra && extra.priorVersion && !scheme ? doc.ref(extra.priorVersion) : null],
     ];
     if (extra && extra.more) pairs.push(...extra.more);
     doc.add(doc.ref(iri), pairs);
@@ -265,6 +271,8 @@
     const doc = new TurtleDoc(ns, generatedBy(project, "SHACL shapes"));
     ontologyHeader(doc, project, ns[SH], "SHACL Shapes", {
       imports: [doc.ref("arch:"), doc.ref(`${P}:`)],
+      nsUri: ns[SH],
+      nsPrefix: SH,
       description: `Which relationship may connect which element types in ${m.title}. A relationship type with no rules is not constrained.`,
     });
 
@@ -365,9 +373,10 @@
     const schemeLabel = project.taxonomy.label || `${m.title} Concept Scheme`;
 
     ontologyHeader(doc, project, ns[T], "Taxonomy", {
-      types: [doc.ref("skos:ConceptScheme"), doc.ref("owl:Ontology")],
-      imports: [doc.ref("arch:"), doc.ref(`${P}:`)],
-      description: `Classification of the ${m.title} model concepts.`,
+      scheme: true,
+      nsUri: ns[T],
+      nsPrefix: T,
+      description: `Classification of the ${m.title} model concepts${project.proposalOrders.length ? ", and the orders in which a modelling tool proposes its relationship types" : ""}.`,
       more: [
         [doc.ref("skos:prefLabel"), doc.lit(schemeLabel, lang)],
         [doc.ref("skos:hasTopConcept"), tops.map((c) => doc.ref(c.id, T))],
@@ -391,16 +400,31 @@
       ]);
     }
 
-    const order = project.proposalOrder.filter((id) => project.relationships.some((r) => r.id === id));
-    if (order.length) {
-      doc.add(doc.ref("RelationshipProposalOrder", T), [
-        ["a", doc.ref("arch:RelationshipProposalOrder")],
-        [doc.ref("skos:prefLabel"), doc.lit(`${m.title} relationship proposal order`, lang)],
-        [doc.ref("skos:definition"), doc.lit("The order in which a modelling tool proposes relationship types when two elements are connected.", lang)],
-        [doc.ref("skos:memberList"), doc.list(order.map((id) => doc.ref(id, P)))],
+    // Proposal orders (SReq 4.2, SD-4): ordered collections of relationship types, named from the manifest with
+    // arch:relationshipProposalOrder. A scoped one names the types it applies to with domain/rangeIncludes.
+    for (const o of proposalOrdersToWrite(project)) {
+      const scoped = o.domain.length || o.range.length;
+      doc.add(doc.ref(o.id, T), [
+        ["a", doc.ref("skos:OrderedCollection")],
+        [doc.ref("skos:prefLabel"), doc.lit(o.label || (scoped ? core.humanize(o.id) : `${m.title} relationship proposal order`), lang)],
+        [doc.ref("skos:definition"), doc.lit(o.definition || (scoped
+          ? "The order in which a modelling tool proposes relationship types between elements of the types it names."
+          : "The order in which a modelling tool proposes relationship types when two elements are connected."), lang)],
+        [doc.ref("skos:scopeNote"), text(doc, o.scopeNote, lang)],
+        [doc.ref("arch:domainIncludes"), o.domain.map((d) => doc.ref(d, P))],
+        [doc.ref("arch:rangeIncludes"), o.range.map((d) => doc.ref(d, P))],
+        [doc.ref("skos:memberList"), doc.list(o.members.map((id) => doc.ref(id, P)))],
       ]);
     }
     return doc.render();
+  }
+
+  /** The proposal orders worth writing: those that list a relationship type the project defines. */
+  function proposalOrdersToWrite(project) {
+    const rels = new Set(project.relationships.map((r) => r.id));
+    return project.proposalOrders
+      .map((o) => Object.assign({}, o, { members: o.members.filter((id) => rels.has(id)) }))
+      .filter((o) => o.id && o.members.length);
   }
 
   // ---------------------------------------------------------------- viewpoints
@@ -483,17 +507,11 @@
 
   // ---------------------------------------------------------------- notation
 
-  function notationSetIri(project) {
-    return `${project.meta.name}StandardNotation`;
-  }
-
   /**
-   * The notation set and one archvis:VisualNotation per concept. archvis:NotationSet,
-   * archvis:Style and its colour properties are the terms the converters emit; the
-   * descriptor-level terms (archvis:VisualNotation, archvis:notationFor,
-   * archvis:inNotationSet, archvis:defaultStyle, archvis:shape, archvis:lineStyle,
-   * archvis:arrowHead) follow core-vis's description of a VisualNotation — confirm them
-   * against core-vis-onto.ttl before publishing.
+   * The notation set in core-vis terms (SReq 6, SD-2, SD-3): one arch-vis:VisualNotation per concrete element type
+   * and per relationship type that has a notation, each with an arch-vis:Style carrying everything visual — the
+   * shape type and colours of an element; the line style, both line ends and colour of a relationship. Own shapes
+   * are declared first, as arch-vis:ShapeTypes with a core fallback and path templates.
    */
   function buildNotation(project) {
     const m = project.meta;
@@ -503,41 +521,63 @@
     const lang = m.lang || "en";
     const doc = new TurtleDoc(ns, generatedBy(project, "notation set"));
     ontologyHeader(doc, project, ns[N], "Notation", {
-      imports: [doc.ref("arch:"), doc.ref(`${P}:`)],
+      imports: [doc.ref("arch:"), doc.ref("arch-vis:"), doc.ref(`${P}:`)],
+      nsUri: ns[N],
+      nsPrefix: N,
       description: `The default visual notation of the ${m.title} concepts, for palette generation and diagram rendering.`,
     });
-    const setRef = doc.ref(notationSetIri(project), N);
+    const setRef = doc.ref(core.notationSetName(project), N);
     doc.add(setRef, [
-      ["a", doc.ref("archvis:NotationSet")],
+      ["a", doc.ref("arch-vis:NotationSet")],
       [doc.ref("skos:prefLabel"), doc.lit(`${m.title} Standard Notation`, lang)],
     ]);
-    const styleNode = (style) => {
-      const parts = [`a ${doc.ref("archvis:Style")}`];
-      if (style.fill) parts.push(`${doc.ref("archvis:fillColor")} ${doc.lit(style.fill)}`);
-      if (style.stroke) parts.push(`${doc.ref("archvis:lineColor")} ${doc.lit(style.stroke)}`);
-      if (style.font) parts.push(`${doc.ref("archvis:fontColor")} ${doc.lit(style.font)}`);
-      return `[ ${parts.join(" ; ")} ]`;
-    };
+    const coreShape = (name) => doc.ref(`arch-vis:${core.CORE_SHAPES[name] || "Rectangle"}`);
+
+    for (const s of core.ownShapesInUse(project)) {
+      doc.add(doc.ref(s.id, N), [
+        ["a", doc.ref("arch-vis:ShapeType")],
+        [doc.ref("skos:prefLabel"), doc.lit(s.label || core.humanize(s.id), lang)],
+        [doc.ref("skos:definition"), text(doc, s.definition, lang)],
+        [doc.ref("arch-vis:fallbackShape"), coreShape(s.fallback || "rectangle")],
+        [doc.ref("arch-vis:shapeVariables"), s.variables ? doc.lit(s.variables) : null],
+        [doc.ref("arch-vis:outlinePath"), s.outline ? doc.lit(s.outline) : null],
+        [doc.ref("arch-vis:detailPath"), s.detail ? doc.lit(s.detail) : null],
+        [doc.ref("arch-vis:contentBox"), s.contentBox ? doc.lit(s.contentBox) : null],
+        [doc.ref("arch-vis:labelBox"), s.labelBox ? doc.lit(s.labelBox) : null],
+      ]);
+    }
+
+    const styleNode = (parts) => `[ ${[`a ${doc.ref("arch-vis:Style")}`].concat(parts.filter(Boolean)).join(" ;\n\t\t")} ]`;
+    const colour = (prop, value) => (value ? `${doc.ref(`arch-vis:${prop}`)} ${doc.lit(value)}` : null);
+
     for (const e of project.elements) {
-      if (e.abstract) continue;
       const n = e.notation || {};
+      if (e.abstract || !(n.shape || n.fill || n.stroke || n.font)) continue;
+      const shape = core.resolveShape(project, n.shape);
+      const shapeRef = !shape ? coreShape("rectangle") : shape.kind === "core" ? doc.ref(`arch-vis:${shape.local}`) : doc.ref(shape.id, N);
       doc.add(doc.ref(`${e.id}Notation`, N), [
-        ["a", doc.ref("archvis:VisualNotation")],
-        [doc.ref("archvis:notationFor"), doc.ref(e.id, P)],
-        [doc.ref("archvis:inNotationSet"), setRef],
-        [doc.ref("archvis:shape"), n.shape ? doc.lit(n.shape) : null],
-        [doc.ref("archvis:defaultStyle"), (n.fill || n.stroke || n.font) ? styleNode(n) : null],
+        ["a", doc.ref("arch-vis:VisualNotation")],
+        [doc.ref("arch-vis:notationFor"), doc.ref(e.id, P)],
+        [doc.ref("arch-vis:inNotationSet"), setRef],
+        [doc.ref("arch-vis:defaultStyle"), styleNode([
+          `${doc.ref("arch-vis:shapeType")} ${shapeRef}`,
+          colour("fillColor", n.fill), colour("lineColor", n.stroke), colour("fontColor", n.font),
+        ])],
       ]);
     }
     for (const r of project.relationships) {
       const s = r.style || {};
+      if (!(s.line || s.source || s.target || s.stroke)) continue;
       doc.add(doc.ref(`${r.id}Notation`, N), [
-        ["a", doc.ref("archvis:VisualNotation")],
-        [doc.ref("archvis:notationFor"), doc.ref(r.id, P)],
-        [doc.ref("archvis:inNotationSet"), setRef],
-        [doc.ref("archvis:lineStyle"), s.line ? doc.lit(s.line) : null],
-        [doc.ref("archvis:arrowHead"), s.arrow ? doc.lit(s.arrow) : null],
-        [doc.ref("archvis:defaultStyle"), s.stroke ? styleNode({ stroke: s.stroke }) : null],
+        ["a", doc.ref("arch-vis:VisualNotation")],
+        [doc.ref("arch-vis:notationFor"), doc.ref(r.id, P)],
+        [doc.ref("arch-vis:inNotationSet"), setRef],
+        [doc.ref("arch-vis:defaultStyle"), styleNode([
+          `${doc.ref("arch-vis:lineStyle")} ${doc.ref(`arch-vis:${core.LINE_STYLE_IRIS[s.line] || "SolidLine"}`)}`,
+          `${doc.ref("arch-vis:sourceDecor")} ${doc.ref(`arch-vis:${core.DECORATION_IRIS[s.source] || "NoDecoration"}`)}`,
+          `${doc.ref("arch-vis:targetDecor")} ${doc.ref(`arch-vis:${core.DECORATION_IRIS[s.target] || "OpenArrowhead"}`)}`,
+          colour("lineColor", s.stroke),
+        ])],
       ]);
     }
     return doc.render();
@@ -554,6 +594,8 @@
     const a = m.assets;
     const doc = new TurtleDoc(ns, generatedBy(project, "arch:Metamodel manifest"));
     ontologyHeader(doc, project, ns[MM], "Metamodel", {
+      nsUri: ns[MM],
+      nsPrefix: MM,
       description: `The manifest of the ${m.title} metamodel: it names every document that makes up the modeling language.`,
     });
     const files = [`model concepts (${core.fileNames(project).onto})`];
@@ -572,9 +614,11 @@
       [doc.ref("arch:modelConcepts"), doc.ref(`${P}:`)],
       [doc.ref("arch:formalRules"), a.shapes ? doc.ref(`${P}sh:`) : null],
       [doc.ref("arch:conceptClassification"), a.taxonomy ? doc.ref(`${P}tax:`) : null],
+      // The orders live in the taxonomy document (SReq 1.4, SD-4).
+      [doc.ref("arch:relationshipProposalOrder"), a.taxonomy ? proposalOrdersToWrite(project).map((o) => doc.ref(o.id, `${P}tax`)) : null],
       [doc.ref("arch:architectureViewpoints"), a.viewpoints ? doc.ref(`${P}vp:`) : null],
       [doc.ref("arch:viewpointLibrary"), a.viewpoints ? doc.ref("ViewpointCatalog", `${P}vp`) : null],
-      [doc.ref("arch:notationSet"), a.notation ? doc.ref(notationSetIri(project), `${P}not`) : null],
+      [doc.ref("arch:notationSet"), a.notation ? doc.ref(core.notationSetName(project), `${P}not`) : null],
       [doc.ref("arch:metamodelIdentifiesStakeholder"), m.manifestStakeholders.map((s) => ref(s, "archvp"))],
       [doc.ref("arch:metamodelIdentifiesConsideration"), m.manifestConcerns.map((s) => ref(s, "archvp"))],
     ]);
@@ -605,6 +649,7 @@
       `${project.relationships.length} relationship types`,
       `${project.attributes.length} attributes`,
       `${Object.values(project.rules).reduce((n, l) => n + l.length, 0)} relationship rules`,
+      `${proposalOrdersToWrite(project).length} relationship proposal orders`,
       `${project.viewpoints.length} viewpoints`,
     ];
     return [
@@ -624,6 +669,13 @@
       "",
       `Serve each document at its namespace without the fragment (for example \`${ns[m.prefix].replace(/#$/, "")}\`),`,
       "with content negotiation for `text/turtle`, as meta.linked.archi does for the published languages.",
+      "",
+      "## Using it in la-gram",
+      "",
+      "Published at its IRIs, the set loads in la-gram by its metamodel IRI",
+      `(\`${ns[m.prefix + "mm"]}${m.name}\`). Before that, upload the documents with`,
+      "*Metamodels › Upload metamodel or asset file…*, one at a time: every other document first, the manifest",
+      `(\`${f.manifest}\`) last.`,
       "",
       "## Using it with linked-archi-apm",
       "",

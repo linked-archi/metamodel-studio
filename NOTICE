@@ -1,11 +1,10 @@
 Linked.Archi Metamodel Studio
 Copyright 2026 Kalin Maldzhanski
-
 Licensed under the Apache License, Version 2.0.
 
-vendor/n3.min.js is N3.js 1.17.4 (https://github.com/rdfjs/N3.js), MIT licensed;
-see vendor/N3-LICENSE.md.
+vendor/n3.min.js is the browser bundle of N3.js 2.13.12 (https://github.com/rdfjs/N3.js),
+MIT licensed; see vendor/N3-LICENSE.md.
 
-The documents in fixtures/ are extracts of the Linked.Archi ontologies published at
-https://meta.linked.archi/ (the linked-archi-meta repository), licensed CC-BY-4.0.
-See fixtures/README.md.
+The documents in fixtures/ are copies of the Linked.Archi ontologies published at
+https://meta.linked.archi/ (the linked-archi-meta repository), each under the licence it
+states, mostly CC-BY-4.0. See fixtures/README.md.
