@@ -11,9 +11,8 @@ open. Your work stays in your browser (localStorage) until you save or export it
 uploaded. Each [release](https://github.com/linked-archi/metamodel-studio/releases) carries the
 studio as an npm package and as a zip (*Installing*).
 
-The source, its issues and merge requests are on GitLab:
-<https://gitlab.com/linked-archi/linked-archi-tools/modellers/metamodel-studio>. GitHub has a
-read-only copy.
+The source, its issues and pull requests are on GitHub:
+<https://github.com/linked-archi/metamodel-studio>.
 
 It needs no build step, no server and no dependencies, so it also runs offline. Open
 `index.html` in a browser:
@@ -251,7 +250,6 @@ Its calls may still change: the engine becomes a package of its own.
 | `tests/` | `studio.test.js` (Node), `package.test.js` (the packages built, installed and run), `test_metamodel_studio.py` (Python), `kernel/` (through `@linked-archi/kernel`), `ui/` (the page in a browser) |
 | `vendor/n3.min.js` | [N3.js](https://github.com/rdfjs/N3.js) 2.13.12, its browser bundle, MIT (`vendor/N3-LICENSE.md`) |
 | `.github/workflows/` | CI, releases and the demo (*Releases and the demo*) |
-| `.gitlab-ci.yml` | Checks, and the page onto app.linked.archi (*Deploying*) |
 | `.agents/` | Conventions, specification and plan, for people and coding agents (`AGENTS.md`) |
 
 ## Development
@@ -274,9 +272,8 @@ A test fails when the committed templates are stale. The kernel checks need Node
 kernel is published they run locally, not in CI. The page's checks need Playwright and a
 browser, so they run locally too, and skip without them.
 
-GitLab CI (`.gitlab-ci.yml`) runs `npm test`, the Python tests and the command line on
-every merge request and on `main`. On GitHub, `ci.yml` runs the same, and the build, on every
-push and pull request.
+CI runs `npm test`, the Python tests, the command line and the build on every push to `main`
+and every pull request (*Releases and the demo*).
 
 ## Releases and the demo
 
@@ -302,52 +299,6 @@ tags*, a tag rule `v*`.
 `npm run build` makes the same files locally, into `dist/`: a development build,
 `<version>-dev.g<commit>`, unless `-- --version <version>` gives one. Building a version again gives
 the same bytes, so the demo's copies equal the files on the release.
-
-## Deploying
-
-On GitLab, each merge to `main` puts the page at <https://app.linked.archi/metamodel-studio/> once
-the checks pass. The `deploy` job copies it over SSH onto the server that serves app.linked.archi,
-as la-gram's pipeline copies la-gram, and takes away files no longer there. Only what the
-browser loads goes: `index.html`, `styles.css`, `favicon.svg`, `js/`, `vendor/`, `templates/`,
-`LICENSE` and `NOTICE`.
-
-Once, before the first deploy:
-
-1. **Create the environment `production`**, with the URL above (*Operate › Environments*), so
-   the variable form can offer it.
-2. **Add the deploy variables** (*Settings › CI/CD › Variables*), each with *Protect variable*
-   ticked, *Expand variable reference* cleared and the environment scope `production`:
-
-   | Key | Type | Value |
-   |---|---|---|
-   | `DEPLOY_SSH_KEY` | File | the deploy user's private SSH key, all of it, ending with a new line |
-   | `DEPLOY_HOST` | Variable | `app.linked.archi` |
-   | `DEPLOY_USER` | Variable | `deploy` |
-   | `STUDIO_DEPLOY_PATH` | Variable | `/var/www/linked-archi-app/metamodel-studio` |
-
-   The key and the user can be the ones la-gram's deploy uses, or a key of the studio's own,
-   added to the deploy user's `~/.ssh/authorized_keys`.
-3. **On the server:** the folder for the deploy user, and two locations in the nginx site for
-   app.linked.archi (kept with the host's configuration), beside la-gram's:
-
-   ```bash
-   sudo mkdir -p /var/www/linked-archi-app/metamodel-studio
-   sudo chown deploy:www-data /var/www/linked-archi-app/metamodel-studio
-   ```
-
-   ```nginx
-   location = /metamodel-studio {
-       absolute_redirect off;
-       return 301 /metamodel-studio/;
-   }
-   location ^~ /metamodel-studio/ {
-       try_files $uri $uri/ =404;
-   }
-   ```
-
-   Then `sudo nginx -t && sudo systemctl reload nginx`. The studio runs under the headers the
-   site already sends for la-gram, its Content-Security-Policy included. Add no `add_header` in
-   these locations: one would drop every header the site sets.
 
 ## Licence
 

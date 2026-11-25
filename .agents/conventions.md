@@ -89,7 +89,6 @@ tests/kernel/             what la-gram and the workspace read from generated set
 tests/ui/                 the page in a browser: drags, menus and keys
 vendor/n3.min.js          N3.js browser bundle
 .github/workflows/        CI, releases and the demo on GitHub Pages (SD-19)
-.gitlab-ci.yml            checks, and the page onto app.linked.archi (SD-11)
 ```
 
 ## Workflow

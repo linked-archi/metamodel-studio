@@ -33,30 +33,6 @@
 - [x] `npm test` (18), the Python tests (11) and `npm run test:kernel` (29) pass; the page renders every section of both templates and imports the published ArchiMate 4.0 with no console error
 - [x] README, fixtures/README, NOTICE, the CI note
 
-## Move to GitLab (SD-11)
-
-**2026-11-22: the repository's part done, uncommitted, for review.** The rest is done on GitLab and GitHub, by the
-maintainer.
-
-- [x] `.gitlab-ci.yml`, valid against GitLab's CI schema:
-  - `check`: `npm test`, the Python tests and the command line, on a merge request and on `main`. Its job run in
-    `node:22` under Docker passed: 18 Node tests, 11 Python tests, none skipped;
-  - `deploy`: on `main`, the page to `https://app.linked.archi/metamodel-studio/`, as la-gram's `web-deploy`.
-    Rehearsed in Docker against a stand-in SSH host: the 13 files copied, 644 and 755; a file no longer in the
-    page taken away; without `STUDIO_DEPLOY_PATH` it stops and says so
-- [x] The page under the site's headers, la-gram's Content-Security-Policy included, at `/metamodel-studio/`: every
-  section of both templates, an export, an import of the published ArchiMate 4.0 and a reload; no CSP violation.
-  The one console error is the missing `/favicon.ico`, as before
-- [x] `.github/` removed: no GitHub Actions, no GitHub Pages. Reversed on 2026-11-25: three workflows and the demo
-  (SD-19, *The demo and the releases*)
-- [x] README: the online address, the source and issues, the pipeline, *Deploying*
-- [ ] On GitLab: the public project `linked-archi/linked-archi-tools/modellers/metamodel-studio`, created empty; the
-  environment `production` and the deploy variables (README, *Deploying*)
-- [ ] On the server: the folder and the two nginx locations (README, *Deploying*)
-- [ ] `main` pushed to GitLab; the first deploy
-- [ ] A push mirror to `github.com/linked-archi/metamodel-studio` (*Settings › Repository › Mirroring
-  repositories*). On GitHub: issues off, and the description pointing to GitLab
-
 ## Hierarchy editing (SReq 11, SD-12 to SD-16)
 
 **2026-11-25: done, uncommitted, for review.** Working notes: `../../tasks/hierarchy-editing/`.
@@ -124,7 +100,7 @@ GitHub and a tag, by the maintainer.
 - [x] The page's icon, `favicon.svg`: the page had none, so every visit logged a failed request for one
 - [x] `.github/workflows/`: `ci.yml`, `release.yml`, `demo.yml`, valid against GitHub's workflow schema, with the
   actions' current major versions
-- [x] README, *Installing* and *Releases and the demo*; SReq 10.4–10.6; SD-19, and SD-11's line on GitHub
+- [x] README, *Installing* and *Releases and the demo*; SReq 10.4–10.6; SD-19
 - [ ] On GitHub, once: *Settings › Pages › Source: GitHub Actions*; *Settings › Environments › github-pages ›
   Deployment branches and tags*, a tag rule `v*`
 - [ ] The first release, `v0.1.0`, and the demo checked at <https://linked-archi.github.io/metamodel-studio/>
@@ -158,13 +134,18 @@ See `plan.md`. Not started.
 
 ## Change log
 
+- **2026-11-25. The repository stays on GitHub (SD-11).** The move to GitLab is dropped before it was made.
+  `.gitlab-ci.yml` is removed, with its deploy beside la-gram; its checks run in `ci.yml`, and the page is served
+  by GitHub Pages. The README's links to GitLab are gone. Where the engine is published is open again, for A2.
+- **2026-11-25. The release's install check takes its tarball as a file.** npm read `dist/<name>.tgz` as a GitHub
+  repository, so the first run of `release.yml`, for `v0.1.0`, failed before making the release. *release.yml*
 - **2026-11-25. The demo and the releases (SReq 10.4–10.6, SD-19).**
   - **A demo on GitHub Pages,** built by `demo.yml` from each release and by hand: the page, a link to each
     starting point, a note on where to start, and under `packages/` the release's two files. *tests/ui*
   - **Two packages on each release:** the npm package, with `la-studio`, the engine for Node and the page, which
     `la-studio serve` serves; and the page as a zip. Both install from their address, with no registry.
     *package.test.js*
-  - **CI on GitHub,** the checks GitLab's `check` job runs, and the build. *ci.yml*
+  - **CI on GitHub:** the Node and Python checks, the command line and the build. *ci.yml*
 - **2026-11-25. The category link and the base (SReq 4.6, 11.8, 12, SD-17, SD-18).**
   - **A category keeps the type it stands for,** `standsFor`, read from and written as `rdfs:seeAlso`, as the
     published ArchiMate 4.0 taxonomy links its 14 categories to their classes. Its page compares that type with the

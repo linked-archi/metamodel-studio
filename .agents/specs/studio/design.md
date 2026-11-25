@@ -71,25 +71,21 @@ Each release carries the page, the command line and the engine as packages, and 
 - **SD-10 Project format `/2`.** It adds `proposalOrders`, relationship styles with `source` and `target`,
   `shapes`, and `meta.notationSetName`. The notation set's name is kept from an import, so a published set keeps
   its IRI, for example `am4not:ArchiMate40StandardNotation`.
-- **SD-11 The repository is on GitLab, mirrored to GitHub.** From 2026-11-22 it is a public project beside la-gram,
-  `linked-archi/linked-archi-tools/modellers/metamodel-studio`. GitHub keeps a copy for visibility.
+- **SD-11 The repository stays on GitHub.** It is public at `github.com/linked-archi/metamodel-studio`, with its
+  issues, pull requests, CI, releases and demo (SD-19). Decision confirmed on 2026-11-25. A move to GitLab, decided
+  on 2026-11-22, was dropped before it was made: its project had not been created, and the studio had begun to
+  release and run its demo from GitHub. The pipeline written for the move, with its deploy beside la-gram, is
+  removed.
   - **The engine lives here.** It becomes `packages/engine` in this repository, and the page is its first user. It
     moves to a repository of its own only if it needs to (PD-16, A2).
-  - **It is published where the kernel is:** this project's GitLab package registry, as the kernel publishes to its
-    own (PD-14). The pipeline publishes with its job token. If the kernel's project is private, the same token
-    installs the kernel, once that project allows this one. No GitLab token is kept on another platform.
-  - **Why not GitHub.** The engine's users and its contract are on GitLab: the kernel, the workspace (W08), the
-    platform (F05) and la-gram. From GitHub, every publish to GitLab's registry would need a long-lived GitLab token
-    in GitHub's secrets, and GitHub Packages needs a token even to install a public package. The GitHub repository
-    had no stars, forks or issues, so moving cost little.
-  - **Not in the `linked-archi-platform` group**, although the folder here is `tools/platform/`. That group is
-    private, and GitLab allows no public project in a private group.
-  - **The mirror is one-way.** GitLab pushes to GitHub. Changes, issues and merge requests are made on GitLab, and
-    the GitHub copy has its issues turned off. Changed on 2026-11-25: the GitHub copy runs three workflows, and
-    serves the demo on GitHub Pages (SD-19). The GitLab project did not exist yet.
-  - **The page is served beside la-gram,** at `https://app.linked.archi/metamodel-studio/`. This project's
-    pipeline copies it there over SSH, as la-gram's copies la-gram, and it runs under the site's headers, la-gram's
-    Content-Security-Policy included (README, *Deploying*).
+  - **Where the engine is published is open,** and decided with A2. Its users are on GitLab: the kernel, the
+    workspace (W08), the platform (F05) and la-gram. GitHub Packages needs a token even to install a public
+    package, and publishing to GitLab's registry from here needs a long-lived GitLab token in GitHub's secrets.
+    Until A2, each release carries the engine in the studio's npm package, installed from its address (SD-19).
+  - **The page is served by GitHub Pages.** Serving it beside la-gram as well would need a deploy job here, with an
+    SSH key in GitHub's secrets. Nothing asks for that yet.
+  - **PD-16 still names the GitLab project** in its paragraph on where the engine lives. That paragraph changes
+    with the platform's register.
 
 - **SD-12 A tree row is an item under one parent.** An element type with two parents has two rows, and choosing one
   highlights the other (SReq 11.1).
@@ -166,8 +162,7 @@ Each release carries the page, the command line and the engine as packages, and 
     imports say enough to find a base, and nothing new is written into the project.
 
 - **SD-19 A demo on GitHub Pages, and the studio as packages on each release.** Asked for on 2026-11-25, when
-  nothing served the page yet: GitHub Pages, `app.linked.archi/metamodel-studio/` and the GitLab project all
-  answered 404 (SReq 10.4–10.6).
+  nothing served the page yet (SReq 10.4–10.6).
   - **As rdf2docs publishes.** `ci.yml` runs on every push and pull request. `release.yml` runs on a tag
     `v<major>.<minor>.<patch>`: it attaches both packages to a GitHub release, then calls `demo.yml`, which also
     runs by hand. A release made with the workflow's token starts no other workflow, so the demo is called, not
@@ -195,9 +190,8 @@ Each release carries the page, the command line and the engine as packages, and 
 
 | Question | Where it is decided |
 |---|---|
-| The engine as a shared TypeScript package | A2: platform decision PD-16 was accepted on 2026-11-24. Where it lives and is published: SD-11. Until then, each release carries it in the studio's npm package (SD-19) |
-| Whether the move to GitLab still stands. The README links to the GitLab project and to `app.linked.archi/metamodel-studio/`, and neither exists yet | SD-11, SD-19 |
-| Installing from GitLab's package registry with npm 12, which by default refuses the tarballs its instance and group endpoints give (`EALLOWREMOTE`, gitlab-org/gitlab#605970). The project endpoint should avoid it; not yet tried | A2, when the engine is first published; the kernel meets it too |
+| The engine as a shared TypeScript package, and where it is published | A2: platform decision PD-16 was accepted on 2026-11-24. Where it is published is open (SD-11). Until then, each release carries it in the studio's npm package (SD-19) |
+| Installing the kernel from GitLab's package registry with npm 12, which by default refuses the tarballs its instance and group endpoints give (`EALLOWREMOTE`, gitlab-org/gitlab#605970). The project endpoint should avoid it; not yet tried | When the kernel is published (K02) and the kernel checks install it from there |
 | Previewing an imported own shape from its path templates (now: its fallback) | A2 |
 | What import drops from published sets: icons, alternative styles, rendering modes, presentation contexts, element and principle shapes, relationship tables | A2–A4, as the workspace needs them |
 | Pinning a base and its version in the project, and loading it from its IRI (SD-18) | A3 |

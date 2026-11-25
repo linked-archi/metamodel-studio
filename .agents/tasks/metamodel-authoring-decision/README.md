@@ -29,6 +29,6 @@ The text in the register is the reference. In short:
 - two kinds of project: a whole language, and an extension that pins a base metamodel and generates its additions;
 - K02's frozen API covers the engine's calls.
 
-Decided 2026-11-22, for A2: the engine is `packages/engine` in the studio's repository, published to that project's
-GitLab package registry. The repository moves to GitLab and keeps a mirror on GitHub (`design.md`, SD-11). PD-16
-says so.
+Decided 2026-11-22, for A2: the engine is `packages/engine` in the studio's repository. Changed on 2026-11-25: the
+repository stays on GitHub, and where the engine is published is open again, for A2 (`design.md`, SD-11). PD-16
+still says the studio moves to GitLab; its paragraph changes with the platform's register.

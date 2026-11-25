@@ -43,11 +43,12 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: node scripts/build.js --version "$VERSION"
 
+      # The ./ makes it a file: npm reads dist/<name>.tgz as the GitHub repository dist/<name>.tgz.
       - name: The npm package installs, and is the tag's version
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          npm install --global --prefix "$RUNNER_TEMP/la" "dist/linked-archi-metamodel-studio-$VERSION.tgz"
+          npm install --global --prefix "$RUNNER_TEMP/la" "./dist/linked-archi-metamodel-studio-$VERSION.tgz"
           "$RUNNER_TEMP/la/bin/la-studio" --version | grep -Fx "la-studio $VERSION"
 
       - name: The GitHub release, with both packages
