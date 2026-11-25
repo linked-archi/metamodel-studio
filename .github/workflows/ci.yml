@@ -1,0 +1,46 @@
+# Every push to main and every pull request: the Node and Python checks, the command line, and the demo site and
+# packages built from this revision (README, Releases and the demo; design.md, SD-19).
+#
+# Two kinds of check run locally only: the kernel's (npm run test:kernel), until @linked-archi/kernel is published
+# (SReq 9.5), and the page's (npm run test:ui), which need a browser (tasks.md, Known limitations).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - run: pip install --quiet -r requirements-dev.txt
+
+      # No npm install: the page, the command line and these checks need no packages. npm test also builds the
+      # packages, installs the npm package from its tarball and runs it.
+      - run: npm test
+
+      - run: python -m unittest discover -s tests -v
+
+      - name: A starting point generates, and passes its own checks
+        run: |
+          node scripts/cli.js template cloudplatform -o "$RUNNER_TEMP/cp.json"
+          node scripts/cli.js generate "$RUNNER_TEMP/cp.json" -o "$RUNNER_TEMP/out"
+          node scripts/cli.js lint "$RUNNER_TEMP/cp.json"
+
+      - name: The demo site and the packages build
+        run: npm run build

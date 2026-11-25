@@ -6,8 +6,10 @@ Backstage and LeanIX are published on meta.linked.archi. You fill in forms, a
 relationship matrix and checklists. The studio writes the OWL, SHACL and SKOS, the
 notation in core-vis terms, and the `arch:Metamodel` manifest that ties them together.
 
-**Use it online: <https://app.linked.archi/metamodel-studio/>**. Your work stays in
-your browser (localStorage) until you save or export it. Nothing is uploaded.
+**Demo: <https://linked-archi.github.io/metamodel-studio/>**, with the Cloud Platform example
+open. Your work stays in your browser (localStorage) until you save or export it. Nothing is
+uploaded. Each [release](https://github.com/linked-archi/metamodel-studio/releases) carries the
+studio as an npm package and as a zip (*Installing*).
 
 The source, its issues and merge requests are on GitLab:
 <https://gitlab.com/linked-archi/linked-archi-tools/modellers/metamodel-studio>. GitHub has a
@@ -30,6 +32,8 @@ node scripts/cli.js generate cloudplatform.studio.json -o out/
 node scripts/cli.js lint cloudplatform.studio.json
 node scripts/cli.js import onto.ttl shapes.ttl viewpoints.ttl -o project.studio.json
 ```
+
+Installed from a release, the command is `la-studio` (*Installing*).
 
 ## What a Linked.Archi metamodel is
 
@@ -155,6 +159,11 @@ its menu. A drag of a row chosen with others moves all of them. Escape stops a d
   `arch:QualifiedRelationship`, rules from the relationship shapes, proposal orders from
   the manifest. Documents written by earlier versions of the studio import too.
 
+A link opens a starting point: add `?template=cloudplatform`, `?template=archimate4` or
+`?template=blank` to the page's address, as in
+<https://linked-archi.github.io/metamodel-studio/?template=archimate4>. Over a project you have
+changed, the studio asks first, and Undo brings yours back.
+
 Generating, importing and generating again is lossless. The tests check that all six
 documents come back isomorphic. Importing a published set keeps what the studio's project
 model holds, the order of its groups and types, its palette grouping and its diagram group
@@ -186,11 +195,47 @@ python3 bin/la-kg profile derive cloudplatform --metamodel out/cloudplatform-met
 python3 bin/la-kg validate run --data model.trig --shapes out/cloudplatform-shapes.ttl
 ```
 
+## Installing
+
+Each [release](https://github.com/linked-archi/metamodel-studio/releases) carries two files, and the
+demo's [packages page](https://linked-archi.github.io/metamodel-studio/packages/) has the latest
+release's:
+
+- **The npm package**, `linked-archi-metamodel-studio-<version>.tgz`: the `la-studio` command, the
+  engine for Node, and the page, which `la-studio serve` serves on your computer. It needs Node 18 or
+  newer and has no dependencies.
+- **The page as a zip**, `metamodel-studio-<version>.zip`: unzip it and open `index.html`, or put the
+  folder on any static host.
+
+npm installs the package from its address, with no registry and no token:
+
+```bash
+npm install --global https://github.com/linked-archi/metamodel-studio/releases/download/v0.1.0/linked-archi-metamodel-studio-0.1.0.tgz
+la-studio template cloudplatform -o cloudplatform.studio.json
+la-studio generate cloudplatform.studio.json -o out/
+la-studio serve                          # the page, at http://127.0.0.1:8000/
+```
+
+In a project, `npm install` with the same address gives the engine, as the page has it in
+`window.LAStudio`:
+
+```js
+const fs = require("fs");
+const { core, generator, lint } = require("linked-archi-metamodel-studio");
+
+const project = core.normalize(JSON.parse(fs.readFileSync("cloudplatform.studio.json", "utf8")));
+for (const f of generator.generate(project)) fs.writeFileSync(f.name, f.content);
+console.log(lint.lint(project));
+```
+
+Its calls may still change: the engine becomes a package of its own.
+
 ## Layout
 
 | Path | |
 |---|---|
-| `index.html`, `styles.css`, `js/app.js` | The user interface |
+| `index.html`, `styles.css`, `favicon.svg`, `js/app.js` | The user interface |
+| `index.js` | The engine for Node: what the page has as `window.LAStudio`, without the user interface |
 | `js/tree.js` | Its trees, ordered lists, menus and drag and drop |
 | `js/core.js` | Project model: defaults, namespaces, scoped ids, rename and delete, the notation vocabulary, and the moves, orders and relations the trees use |
 | `js/generator.js` | Project → Turtle documents |
@@ -198,25 +243,30 @@ python3 bin/la-kg validate run --data model.trig --shapes out/cloudplatform-shap
 | `js/lint.js` | Checks |
 | `js/zip.js` | `.zip` export |
 | `templates/templates.js` | Starting points, written by `scripts/build-templates.js` |
-| `scripts/cli.js` | Command line |
+| `scripts/cli.js` | Command line, `la-studio` |
+| `scripts/page.js` | The page's files, and the server `la-studio serve` runs |
+| `scripts/build.js` | The demo site and both packages, into `dist/` |
 | `scripts/sync-fixtures.mjs` | Refreshes `fixtures/` from the kernel's copies of the published documents |
 | `fixtures/` | Published documents, byte for byte: core, core-vis and ArchiMate 4.0 (`fixtures/README.md`) |
-| `tests/` | `studio.test.js` (Node), `test_metamodel_studio.py` (Python), `kernel/` (through `@linked-archi/kernel`), `ui/` (the page in a browser) |
+| `tests/` | `studio.test.js` (Node), `package.test.js` (the packages built, installed and run), `test_metamodel_studio.py` (Python), `kernel/` (through `@linked-archi/kernel`), `ui/` (the page in a browser) |
 | `vendor/n3.min.js` | [N3.js](https://github.com/rdfjs/N3.js) 2.13.12, its browser bundle, MIT (`vendor/N3-LICENSE.md`) |
+| `.github/workflows/` | CI, releases and the demo (*Releases and the demo*) |
+| `.gitlab-ci.yml` | Checks, and the page onto app.linked.archi (*Deploying*) |
 | `.agents/` | Conventions, specification and plan, for people and coding agents (`AGENTS.md`) |
 
 ## Development
 
 ```bash
-npm test                                         # Node checks, no dependencies
+npm test                                         # Node checks, and the packages built, installed and run; no dependencies
 pip install -r requirements-dev.txt
 python3 -m unittest discover -s tests            # independent RDF and SHACL checks
-npm install                                      # development dependencies: Vitest and the kernel
+npm install                                      # development dependencies: Vitest, the kernel and Playwright
 npm run test:kernel                              # what la-gram and the workspace read from the output
-npm install --save-dev playwright                # once, for the page's checks
 npm run test:ui                                  # drags, menus and keys, in Chrome or Playwright's Chromium
 npm run fixtures                                 # refresh fixtures/ from the kernel (-- --check compares)
 npm run templates                                # after changing the importer, generator or fixtures
+npm run build                                    # the demo site and both packages, into dist/
+npm run serve                                    # the page, at http://127.0.0.1:8000/
 ```
 
 A test fails when the committed templates are stale. The kernel checks need Node 22 and
@@ -225,15 +275,41 @@ kernel is published they run locally, not in CI. The page's checks need Playwrig
 browser, so they run locally too, and skip without them.
 
 GitLab CI (`.gitlab-ci.yml`) runs `npm test`, the Python tests and the command line on
-every merge request and on `main`.
+every merge request and on `main`. On GitHub, `ci.yml` runs the same, and the build, on every
+push and pull request.
+
+## Releases and the demo
+
+Three GitHub Actions workflows, in `.github/workflows/`:
+
+| Workflow | Runs on | Does |
+|---|---|---|
+| `ci.yml` | every push to `main`, every pull request | the Node and Python checks, the command line, and the build |
+| `release.yml` | a tag `v<major>.<minor>.<patch>` | both packages at the tag's version, attached to a GitHub release with generated notes; then the demo |
+| `demo.yml` | each release, and by hand | the page on GitHub Pages, with the release's two files under `packages/`; by hand, a development build of the branch chosen |
+
+`package.json`'s `version` is the next release's. To release, tag and push the tag, then set
+`version` to the one after it:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+Once, before the first release: *Settings › Pages › Source: GitHub Actions*; and, since a release
+deploys the demo from its tag, *Settings › Environments › github-pages › Deployment branches and
+tags*, a tag rule `v*`.
+
+`npm run build` makes the same files locally, into `dist/`: a development build,
+`<version>-dev.g<commit>`, unless `-- --version <version>` gives one. Building a version again gives
+the same bytes, so the demo's copies equal the files on the release.
 
 ## Deploying
 
-Each merge to `main` puts the page at <https://app.linked.archi/metamodel-studio/> once the
-checks pass. The `deploy` job copies it over SSH onto the server that serves app.linked.archi,
+On GitLab, each merge to `main` puts the page at <https://app.linked.archi/metamodel-studio/> once
+the checks pass. The `deploy` job copies it over SSH onto the server that serves app.linked.archi,
 as la-gram's pipeline copies la-gram, and takes away files no longer there. Only what the
-browser loads goes: `index.html`, `styles.css`, `js/`, `vendor/`, `templates/`, `LICENSE` and
-`NOTICE`.
+browser loads goes: `index.html`, `styles.css`, `favicon.svg`, `js/`, `vendor/`, `templates/`,
+`LICENSE` and `NOTICE`.
 
 Once, before the first deploy:
 

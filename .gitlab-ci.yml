@@ -69,6 +69,6 @@ deploy:
   script:
     - test -n "$STUDIO_DEPLOY_PATH" || { echo "STUDIO_DEPLOY_PATH is not set (README.md, Deploying)"; exit 1; }
     - mkdir -p public
-    - cp -r index.html styles.css js vendor templates LICENSE NOTICE public/
+    - cp -r index.html styles.css favicon.svg js vendor templates LICENSE NOTICE public/
     - echo "Deploying to $DEPLOY_USER@$DEPLOY_HOST:$STUDIO_DEPLOY_PATH"
     - rsync -az --delete --chmod=D755,F644 public/ "$DEPLOY_USER@$DEPLOY_HOST:$STUDIO_DEPLOY_PATH/"

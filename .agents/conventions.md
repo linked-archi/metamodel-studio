@@ -60,11 +60,14 @@ Administration screens: `specs/studio/plan.md`, and platform decision PD-16 in
 - **Tests:** `node:test` (no dependencies); Python with pyoxigraph and pyshacl; Vitest with `@linked-archi/kernel`
   (development dependencies, Node 22+); Playwright for the page (a development dependency, with the installed
   Chrome or Playwright's Chromium).
+- **Releases:** GitHub Actions, as rdf2docs; the npm package packed by npm, the zip by `js/zip.js`. Nothing to
+  install for either.
 
 ## File Structure
 
 ```
-index.html, styles.css    the page
+index.html, styles.css    the page, with favicon.svg
+index.js                  the engine for Node: what the page has as window.LAStudio, without its user interface
 js/app.js                 the user interface
 js/tree.js                its trees, ordered lists, menus and drag and drop
 js/core.js                project model, namespaces, scoped ids, rename and delete, notation vocabulary,
@@ -73,15 +76,20 @@ js/generator.js           project -> Turtle documents
 js/importer.js            Turtle documents -> project
 js/lint.js                checks
 js/zip.js                 .zip export
-scripts/cli.js            command line
+scripts/cli.js            command line, la-studio
+scripts/page.js           the page's files, and the server la-studio serve runs
+scripts/build.js          the demo site and both packages, into dist/ (npm run build)
 scripts/build-templates.js  templates/templates.js from fixtures/
 scripts/sync-fixtures.mjs   fixtures/ from the installed kernel package
 fixtures/                 copies of published documents (core, ArchiMate 4.0)
 tests/studio.test.js      Node checks, no dependencies
+tests/package.test.js     the packages built, installed from their tarball and run; the demo site
 tests/test_metamodel_studio.py  RDF and SHACL checks with independent tooling
 tests/kernel/             what la-gram and the workspace read from generated sets, through the kernel
 tests/ui/                 the page in a browser: drags, menus and keys
 vendor/n3.min.js          N3.js browser bundle
+.github/workflows/        CI, releases and the demo on GitHub Pages (SD-19)
+.gitlab-ci.yml            checks, and the page onto app.linked.archi (SD-11)
 ```
 
 ## Workflow

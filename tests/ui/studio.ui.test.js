@@ -1,5 +1,5 @@
 // What the page does with a pointer and a keyboard (SReq 11): `npm run test:ui`. It drives the page in a browser
-// through Playwright, a development dependency (`npm install --save-dev playwright`), with the installed Chrome or
+// through Playwright, a development dependency (`npm install`), with the installed Chrome or
 // Playwright's own Chromium. Without either it skips. The engine's side is checked by tests/studio.test.js.
 "use strict";
 const { test, before, after } = require("node:test");
@@ -12,7 +12,7 @@ try { playwright = require("playwright"); } catch (e) { /* not installed: every 
 const PAGE = "file://" + path.join(__dirname, "..", "..", "index.html");
 let browser = null;
 let page = null;
-let why = playwright ? "" : "Playwright is not installed: npm install --save-dev playwright";
+let why = playwright ? "" : "Playwright is not installed: npm install";
 const errors = [];
 
 before(async () => {
@@ -26,6 +26,14 @@ before(async () => {
   page.on("pageerror", (e) => errors.push(String(e)));
 });
 after(async () => { if (browser) await browser.close(); });
+
+/** The page over HTTP, as the demo serves it: its address keeps a query, and the page can take it away again. */
+let served = null;
+async function overHttp() {
+  if (!served) served = await require("../../scripts/page.js").serve({ port: 0 });
+  return `http://127.0.0.1:${served.address().port}/`;
+}
+after(() => { if (served) served.close(); });
 
 /** The page with a template, ArchiMate 4.0 unless another is named, nothing kept from before. */
 async function fresh(t, template) {
@@ -243,6 +251,56 @@ test("a base the studio does not bundle is loaded from its documents (SReq 12.6)
   await page.locator(".base-status", { hasText: "ArchiMate 3.2, loaded in this browser" }).waitFor();
   await go("elements", "Microservice");
   assert.ok(await page.locator('[data-scope="elements"] .tv-row[data-id^="am:"]').count() > 0, "ArchiMate 3.2's types in the tree");
+});
+
+test("a link opens the starting point it names, and asks before replacing a changed project (SReq 10.4)", async (t) => {
+  if (!page) { t.skip(why); return; }
+  const base = await overHttp();
+  await page.goto(base);
+  await page.evaluate(() => localStorage.clear());
+  await page.goto(`${base}?template=archimate4`);
+  assert.equal((await project()).meta.name, "ArchiMate4");
+  assert.equal(new URL(page.url()).search, "", "the parameter leaves the address");
+  await page.reload();
+  assert.equal((await project()).meta.name, "ArchiMate4", "a reload keeps what the link opened");
+
+  const asked = [];
+  const record = (d) => asked.push(d.message());
+  page.on("dialog", record);
+  try {
+    // From one starting point as it came to another: nothing would be lost, so nothing is asked.
+    await page.goto(`${base}?template=cloudplatform`);
+    assert.equal((await project()).meta.name, "CloudPlatform");
+    assert.deepEqual(asked, []);
+    // A changed project is replaced only when the visitor agrees, and Undo brings it back.
+    await page.locator("label.field", { hasText: /^Title/ }).locator("input").fill("Our cloud");
+    await page.goto(`${base}?template=blank`);
+    assert.equal(asked.length, 1);
+    assert.match(asked[0], /Replace the current project with "Blank metamodel"/);
+    assert.equal((await project()).meta.name, "MyMetamodel");
+    await page.click("#btnUndo");
+    assert.equal((await project()).meta.title, "Our cloud");
+  } finally {
+    page.off("dialog", record);
+  }
+  // A key the studio does not have changes nothing, and says so.
+  await page.goto(`${base}?template=nope`);
+  assert.equal((await project()).meta.title, "Our cloud");
+  assert.match(await page.locator("#toast").textContent(), /no starting point "nope"/);
+});
+
+test("the Overview says where to start until it is hidden (SReq 10.4)", async (t) => {
+  if (!(await fresh(t, "cloudplatform"))) return;
+  const note = page.locator(".welcome");
+  assert.equal(await note.count(), 1);
+  assert.match(await note.textContent(), /This is Cloud Platform, a small language that extends ArchiMate 4\.0/);
+  await note.locator("a", { hasText: "Taxonomy" }).click();
+  assert.equal(await page.locator(".page-head h1").first().textContent(), "Taxonomy");
+  await go("overview");
+  await page.locator(".welcome button", { hasText: "Hide" }).click();
+  assert.equal(await page.locator(".welcome").count(), 0);
+  await page.reload();
+  assert.equal(await page.locator(".welcome").count(), 0, "hidden for this viewer from then on");
 });
 
 test("no page error on any page", async (t) => {

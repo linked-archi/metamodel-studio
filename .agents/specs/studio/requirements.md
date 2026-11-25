@@ -145,6 +145,17 @@ guarantees its users and the tools that read its output: la-gram and the Linked.
    browser's local storage.
 2. The command line runs the same engine under Node with no packages installed.
 3. Project files of formats `linked-archi-metamodel-studio/1` and `/2` open and are migrated to `/3`.
+4. A link opens a starting point: `?template=<key>` after the page's address. On a first visit it is the project
+   opened, and kept. Over a project kept from before, it replaces it without asking only when that project is a
+   starting point as it came; otherwise only when the visitor agrees, and Undo brings the project back. The
+   parameter then leaves the address. The Overview says where to start until the viewer hides it.
+5. The command line, the engine and the page install as one npm package with no dependencies, from the address of
+   its tarball. `la-studio` runs every command; `require` gives the engine as the page has it; `la-studio serve`
+   serves the page on the computer it runs on, and nothing outside the package's folder.
+6. One command builds the demo site and both packages: the npm package and the page as a zip. A release builds
+   them at its tag's version, attaches both to a GitHub release, and publishes the demo with the same two files on
+   GitHub Pages. Any other build is marked as a development build of its commit, and building a version again
+   gives the same bytes.
 
 ### Requirement 11: Editing hierarchies and classification
 

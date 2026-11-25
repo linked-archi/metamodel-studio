@@ -18,7 +18,11 @@
 
   // ------------------------------------------------------------------ state
 
-  let project = loadStored() || startFrom("cloudplatform");
+  // A link may name the starting point to open, ?template=archimate4 (SReq 10.4): on a first visit it is the one
+  // opened; over a project kept from before, see openLinked().
+  const linked = linkedTemplate();
+  const stored = loadStored();
+  let project = stored || startFrom(linked || "cloudplatform");
   const ui = {
     tab: "overview",
     sel: {},           // tab -> selected id
@@ -62,6 +66,21 @@
     } catch (e) { return null; }
   }
 
+  /** The starting point a link names, ?template=<key>, when the studio has one by that key. */
+  function linkedTemplate() {
+    try {
+      const key = new URLSearchParams(location.search).get("template");
+      return key && Object.prototype.hasOwnProperty.call(templates, key) ? key : null;
+    } catch (e) { return null; }
+  }
+
+  /** The key of the starting point `p` is, as it came but for its dates; null once it has been changed. */
+  function asItCame(p) {
+    const plain = (x) => JSON.stringify(Object.assign({}, x, { meta: Object.assign({}, x.meta, { created: "", modified: "" }) }));
+    const mine = plain(p);
+    return Object.keys(templates).find((key) => plain(startFrom(key)) === mine) || null;
+  }
+
   /** The languages loaded from their documents in this browser: namespace -> { project, loaded }. */
   function loadBases() {
     try {
@@ -88,7 +107,7 @@
 
   /** What this viewer keeps between visits: folded rows, the taxonomy's view, whether relations show. Not project data. */
   function loadView() {
-    const fallback = { collapsed: {}, opened: {}, showMembers: true, relations: true, taxView: "tree", showBase: true, matrixBase: false };
+    const fallback = { collapsed: {}, opened: {}, showMembers: true, relations: true, taxView: "tree", showBase: true, matrixBase: false, welcome: true };
     try { return Object.assign(fallback, JSON.parse(localStorage.getItem(VIEW_KEY) || "{}")); } catch (e) { return fallback; }
   }
   function saveView() {
@@ -416,6 +435,23 @@
 
   // ------------------------------------------------------------------ overview
 
+  /** Where to start, for a first visit, until it is hidden (SReq 10.4). Kept with this viewer's view, not the project. */
+  function gettingStarted() {
+    if (view.welcome === false) return null;
+    const to = (tab, label) => h("a", { href: `#${tab}`, onclick: (e) => { e.preventDefault(); go(tab); } }, label);
+    const cloud = templates.cloudplatform && project.meta.name === templates.cloudplatform.project.meta.name;
+    return h("div", { class: "card welcome", role: "note", "aria-label": "Where to start" },
+      h("div", { class: "welcome-head" },
+        h("h3", {}, "Where to start"),
+        h("button", { class: "btn small", onclick: () => { view.welcome = false; saveView(); render(); } }, "Hide")),
+      cloud ? h("p", {}, "This is Cloud Platform, a small language that extends ArchiMate 4.0. New ▾ opens ArchiMate 4.0 itself, or a blank metamodel.") : null,
+      h("ul", {},
+        h("li", {}, to("elements", "Elements"), ": drag a type onto another to make it a subtype, or hold Alt to give it a second parent. A row's ⋯ menu and the keyboard do the same."),
+        h("li", {}, to("taxonomy", "Taxonomy"), ": the categories as a tree or a board, and the type each one stands for."),
+        h("li", {}, to("rules", "Relationship rules"), ": which relationships each pair of types may have."),
+        h("li", {}, h("b", {}, "Export asset set"), ": the Turtle documents la-gram and the workspace read. Your work stays in this browser until you save or export it.")));
+  }
+
   function viewOverview() {
     const m = project.meta;
     const ns = core.namespaces(project);
@@ -431,6 +467,7 @@
     const setMeta = (k) => (v) => { m[k] = v; };
     return h("div", {},
       pageHead("Overview", "A metamodel is published as a set of semantic assets tied together by an arch:Metamodel manifest — the same structure as the ArchiMate, BPMN, C4, Backstage and LeanIX metamodels on meta.linked.archi."),
+      gettingStarted(),
       h("div", { class: "card" },
         h("div", { class: "stats" },
           stat(project.elements.filter((e) => !e.abstract).length, "concrete elements", "elements"),
@@ -2754,6 +2791,29 @@
     if (message) toast(message);
   }
 
+  /**
+   * The starting point a link names, after the first render (SReq 10.4). The parameter leaves the address, so a
+   * reload keeps the work. A project kept from before is replaced without asking only when it is a starting point
+   * as it came; otherwise only if the visitor agrees, and Undo brings it back.
+   */
+  function openLinked() {
+    let params;
+    try { params = new URLSearchParams(location.search); } catch (e) { return; }
+    const key = params.get("template");
+    if (key === null) return;
+    params.delete("template");
+    const query = params.toString();
+    try { window.history.replaceState(null, "", location.pathname + (query ? `?${query}` : "") + location.hash); } catch (e) { /* the address cannot change here: keep it */ }
+    if (!linked) { toast(`The studio has no starting point "${key}". It has ${Object.keys(templates).join(", ")}.`); return; }
+    const t = templates[linked];
+    // Kept at once, so a reload opens what the link opened rather than the default starting point.
+    if (!stored) { saveNow(); toast(`Started from ${t.label}.`); return; }
+    const came = asItCame(stored);
+    if (came === linked) return;
+    if (!came && !confirm(`Replace the current project with "${t.label}"? (Undo can bring it back.)`)) return;
+    setProject(startFrom(linked), `Started from ${t.label}.`);
+  }
+
   function buildNewMenu() {
     const pop = $("menuNew");
     pop.textContent = "";
@@ -2863,5 +2923,6 @@
   refreshBases();
   issues = linter.lint(project, { bases });
   render();
+  openLinked();
   window.__studio = { get project() { return project; }, go, render };
 })();

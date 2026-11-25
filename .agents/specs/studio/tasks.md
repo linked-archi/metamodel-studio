@@ -47,7 +47,8 @@ maintainer.
 - [x] The page under the site's headers, la-gram's Content-Security-Policy included, at `/metamodel-studio/`: every
   section of both templates, an export, an import of the published ArchiMate 4.0 and a reload; no CSP violation.
   The one console error is the missing `/favicon.ico`, as before
-- [x] `.github/` removed: no GitHub Actions, no GitHub Pages
+- [x] `.github/` removed: no GitHub Actions, no GitHub Pages. Reversed on 2026-11-25: three workflows and the demo
+  (SD-19, *The demo and the releases*)
 - [x] README: the online address, the source and issues, the pipeline, *Deploying*
 - [ ] On GitLab: the public project `linked-archi/linked-archi-tools/modellers/metamodel-studio`, created empty; the
   environment `production` and the deploy variables (README, *Deploying*)
@@ -104,6 +105,30 @@ maintainer.
 - [x] `npm test` (36), the Python tests (13), `npm run test:kernel` (31) and `npm run test:ui` (16) pass; the
   ArchiMate 4.0 palette la-gram reads is unchanged with the links written
 
+## The demo and the releases (SReq 10.4–10.6, SD-19)
+
+**2026-11-25: done, for review.** Working notes: `../../tasks/demo-and-releases/`. Publishing needs two settings on
+GitHub and a tag, by the maintainer.
+
+- [x] The engine for Node: `index.js`, the page's `window.LAStudio` without its user interface — *package.test.js*
+- [x] `la-studio serve`, the page on this computer only and nothing outside its folder; `la-studio --version`
+  (SReq 10.5) — *package.test.js*
+- [x] `npm run build`: the npm package, packed from a copy at the build's version without the scripts and
+  development dependencies; the page's zip; the demo site, with both under `packages/` and a page saying how to
+  install them (SReq 10.6) — *package.test.js*
+- [x] Installed from its tarball's address with npm 11: globally, in a project and with `npx`. The command, the
+  engine and the page run from it — *package.test.js*; by hand over HTTP
+- [x] Building a version again gives the same bytes, so the demo's copies equal the release's — *package.test.js*;
+  the release's and the demo's steps rehearsed under bash
+- [x] A link opens a starting point, and the Overview says where to start (SReq 10.4) — *tests/ui*
+- [x] The page's icon, `favicon.svg`: the page had none, so every visit logged a failed request for one
+- [x] `.github/workflows/`: `ci.yml`, `release.yml`, `demo.yml`, valid against GitHub's workflow schema, with the
+  actions' current major versions
+- [x] README, *Installing* and *Releases and the demo*; SReq 10.4–10.6; SD-19, and SD-11's line on GitHub
+- [ ] On GitHub, once: *Settings › Pages › Source: GitHub Actions*; *Settings › Environments › github-pages ›
+  Deployment branches and tags*, a tag rule `v*`
+- [ ] The first release, `v0.1.0`, and the demo checked at <https://linked-archi.github.io/metamodel-studio/>
+
 ## A2–A4
 
 See `plan.md`. Not started.
@@ -121,6 +146,8 @@ See `plan.md`. Not started.
 - **Subtypes have no order of their own:** element and relationship subtypes are listed by name, catalog categories
   in the order they were made.
 - **The page's checks run locally,** with Playwright and a browser, not in CI.
+- **The page's zip is not compressed,** 965 KB: the studio's zip writer stores its entries, as the asset set's
+  export does.
 - **The kernel checks run locally only** until `@linked-archi/kernel` is published (SReq 9.5). They use the tarball
   the kernel packed on 2026-11-20; its `metamodel-manager` and `rdf-engine` equal the kernel's source of
   2026-11-21. When the kernel packs again, run `npm install`.
@@ -131,6 +158,13 @@ See `plan.md`. Not started.
 
 ## Change log
 
+- **2026-11-25. The demo and the releases (SReq 10.4–10.6, SD-19).**
+  - **A demo on GitHub Pages,** built by `demo.yml` from each release and by hand: the page, a link to each
+    starting point, a note on where to start, and under `packages/` the release's two files. *tests/ui*
+  - **Two packages on each release:** the npm package, with `la-studio`, the engine for Node and the page, which
+    `la-studio serve` serves; and the page as a zip. Both install from their address, with no registry.
+    *package.test.js*
+  - **CI on GitHub,** the checks GitLab's `check` job runs, and the build. *ci.yml*
 - **2026-11-25. The category link and the base (SReq 4.6, 11.8, 12, SD-17, SD-18).**
   - **A category keeps the type it stands for,** `standsFor`, read from and written as `rdfs:seeAlso`, as the
     published ArchiMate 4.0 taxonomy links its 14 categories to their classes. Its page compares that type with the

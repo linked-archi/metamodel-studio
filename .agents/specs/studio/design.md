@@ -6,6 +6,7 @@
 flowchart LR
     UI["app.js: the page"] --> Core
     CLI["scripts/cli.js"] --> Core
+    Node["index.js: the engine for Node"] --> Core
     subgraph Engine["engine: no DOM, browser and Node"]
         Core["core.js: project model, namespaces, ids, notation vocabulary"]
         Gen["generator.js: project to Turtle"]
@@ -23,6 +24,9 @@ flowchart LR
 The project file is the editable source. The generator writes the asset set from it; the importer reads any
 Linked.Archi documents back into a project. The kernel checks close the loop: they load a generated set the way
 la-gram does and compare what the kernel reads with the project.
+
+Each release carries the page, the command line and the engine as packages, and the demo runs on GitHub Pages
+(SD-19).
 
 ## Key design decisions
 
@@ -81,7 +85,8 @@ la-gram does and compare what the kernel reads with the project.
   - **Not in the `linked-archi-platform` group**, although the folder here is `tools/platform/`. That group is
     private, and GitLab allows no public project in a private group.
   - **The mirror is one-way.** GitLab pushes to GitHub. Changes, issues and merge requests are made on GitLab, and
-    the GitHub copy has its issues turned off. It runs no GitHub Actions and serves no GitHub Pages.
+    the GitHub copy has its issues turned off. Changed on 2026-11-25: the GitHub copy runs three workflows, and
+    serves the demo on GitHub Pages (SD-19). The GitLab project did not exist yet.
   - **The page is served beside la-gram,** at `https://app.linked.archi/metamodel-studio/`. This project's
     pipeline copies it there over SSH, as la-gram's copies la-gram, and it runs under the site's headers, la-gram's
     Content-Security-Policy included (README, *Deploying*).
@@ -160,11 +165,38 @@ la-gram does and compare what the kernel reads with the project.
   - **Why not stored.** Which base and which version a project is pinned to is A3's (`plan.md`). Until then, the
     imports say enough to find a base, and nothing new is written into the project.
 
+- **SD-19 A demo on GitHub Pages, and the studio as packages on each release.** Asked for on 2026-11-25, when
+  nothing served the page yet: GitHub Pages, `app.linked.archi/metamodel-studio/` and the GitLab project all
+  answered 404 (SReq 10.4–10.6).
+  - **As rdf2docs publishes.** `ci.yml` runs on every push and pull request. `release.yml` runs on a tag
+    `v<major>.<minor>.<patch>`: it attaches both packages to a GitHub release, then calls `demo.yml`, which also
+    runs by hand. A release made with the workflow's token starts no other workflow, so the demo is called, not
+    triggered.
+  - **Two packages.** The npm package `linked-archi-metamodel-studio` has the `la-studio` command, the engine for
+    Node, and the page, which `la-studio serve` serves on the computer it runs on. `index.js` gives the page's
+    `window.LAStudio` without its user interface. The page's zip opens from disk or on any static host. Both keep
+    the names `package.json` already had. The engine's own package, its name and its registry are still A2's
+    (SD-11).
+  - **Installed from an address.** npm installs a tarball from its URL with no registry and no token, which is
+    what GitHub Packages could not offer (SD-11). A release's files keep their address; the demo carries the
+    latest release's.
+  - **The version.** `package.json` holds the next release's, as rdf2docs' `gradle.properties` does, and a release
+    builds at its tag's. Any other build is `<version>-dev.g<commit>`, so one file name never names two builds. The
+    package is packed from a copy with that version, without the scripts and development dependencies: one of them
+    names a tarball on the maintainer's computer.
+  - **The same bytes.** npm packs reproducibly, and the zip is dated by its commit, so the copies `demo.yml`
+    builds equal the files attached to the release.
+  - **A link opens a starting point,** `?template=<key>`, so the demo can link to each example, and the Overview
+    says where to start until the viewer hides it. A link never replaces a changed project without asking.
+  - **`private` stays.** It keeps `npm publish` from putting the package on the public registry before a registry
+    and a name are chosen. Installing from a tarball ignores it.
+
 ## Open questions
 
 | Question | Where it is decided |
 |---|---|
-| The engine as a shared TypeScript package | A2: platform decision PD-16 was accepted on 2026-11-24. Where it lives and is published: SD-11 |
+| The engine as a shared TypeScript package | A2: platform decision PD-16 was accepted on 2026-11-24. Where it lives and is published: SD-11. Until then, each release carries it in the studio's npm package (SD-19) |
+| Whether the move to GitLab still stands. The README links to the GitLab project and to `app.linked.archi/metamodel-studio/`, and neither exists yet | SD-11, SD-19 |
 | Installing from GitLab's package registry with npm 12, which by default refuses the tarballs its instance and group endpoints give (`EALLOWREMOTE`, gitlab-org/gitlab#605970). The project endpoint should avoid it; not yet tried | A2, when the engine is first published; the kernel meets it too |
 | Previewing an imported own shape from its path templates (now: its fallback) | A2 |
 | What import drops from published sets: icons, alternative styles, rendering modes, presentation contexts, element and principle shapes, relationship tables | A2–A4, as the workspace needs them |
