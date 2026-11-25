@@ -46,8 +46,6 @@ Decision confirmed on 2026-11-25:
 
 ## To continue
 
-- To edit by hand: Playwright as a development dependency, `npm install --save-dev --save-exact playwright@1.63.0`.
-  The page's checks (`npm run test:ui`) skip until it is there.
-- To decide: the published ArchiMate 4.0 taxonomy links each category to its abstract type with `rdfs:seeAlso`
-  (`am4tax:ApplicationDomain rdfs:seeAlso am4:ApplicationDomainElement`). Import does not read it, and the match is
-  computed instead. Reading and writing it would make the link explicit where a language publishes one.
+- Playwright is a development dependency since 2026-11-25, so `npm run test:ui` runs its checks.
+- The `rdfs:seeAlso` from a category to its abstract type: decision confirmed on 2026-11-25, to keep it as the
+  category's `standsFor`. Done with the base metamodel in `../base-metamodel/`.

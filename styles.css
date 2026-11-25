@@ -245,6 +245,13 @@ table.matrix { border-collapse: separate; border-spacing: 0; font-size: 12px; }
 }
 .tv-row:hover .tv-more, .tv-row:focus .tv-more, .tv-row.sel .tv-more { visibility: visible; }
 .tv-more:hover { background: var(--line); color: var(--ink); }
+/* a type of a language the project extends (SReq 12): read only, quieter than the project's own */
+.tv-row.base .tv-label, .tv-row.member.base .tv-label { color: var(--ink-2); }
+.tv-row.base .tag { opacity: .8; }
+.tv-row.member.inherited .tag { font-family: inherit; font-style: italic; }
+.base-switch { margin-left: auto; white-space: nowrap; }
+.base-status { white-space: nowrap; }
+.base-def { font-size: 13px; color: var(--ink-2); margin: 0 0 12px; }
 .pill.tiny { font-size: 10.5px; padding: 0 6px; line-height: 16px; white-space: nowrap; font-weight: 500; }
 .pill.match.exact { background: var(--accent-soft); border-color: transparent; }
 .pill.match.close { background: var(--warn-soft); border-color: transparent; }
@@ -291,6 +298,7 @@ body.dnd-active, body.dnd-active * { cursor: grabbing !important; user-select: n
 .rel-diagram .node rect { fill: var(--panel); stroke: var(--line-2); stroke-width: 1.2; }
 .rel-diagram .node.self rect { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.6; }
 .rel-diagram .node.outside rect { stroke-dasharray: 4 3; }
+.rel-diagram .node.base rect { fill: var(--panel-2); }
 .rel-diagram .node.category rect { fill: var(--info-soft); stroke: transparent; }
 .rel-diagram .node.more rect { fill: transparent; stroke: transparent; }
 .rel-diagram .node.link { cursor: pointer; }

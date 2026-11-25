@@ -20,6 +20,7 @@ const VANN = "http://purl.org/vocab/vann/";
 const ARCH = "https://meta.linked.archi/core#";
 const VIS = "https://meta.linked.archi/core-vis#";
 const ISO_THES = "http://purl.org/iso25964/skos-thes#";
+const RDFS = "http://www.w3.org/2000/01/rdf-schema#";
 
 function quads(text) {
   return new N3.Parser({ format: "text/turtle" }).parse(text);
@@ -295,7 +296,7 @@ test("renaming and deleting reach the orders and the collections", () => {
 test("a format /2 project opens as /3 with no orders", () => {
   const p = core.normalize({ format: "linked-archi-metamodel-studio/2", taxonomy: { label: "", categories: [{ id: "A", label: "A", parent: "" }] } });
   assert.equal(p.format, core.FORMAT);
-  assert.deepEqual(p.taxonomy.categories[0], { id: "A", label: "A", definition: "", parent: "", categoryOrder: [], memberOrder: [], orderLabel: "" });
+  assert.deepEqual(p.taxonomy.categories[0], { id: "A", label: "A", definition: "", parent: "", standsFor: "", categoryOrder: [], memberOrder: [], orderLabel: "" });
   assert.deepEqual(p.taxonomy.paletteGrouping, { id: "PaletteGrouping", label: "", definition: "", members: [] });
   assert.equal(p.taxonomy.diagramGroupOrder.id, "DiagramGroupOrder");
 });
@@ -423,6 +424,83 @@ test("checks catch an order whose name is taken", () => {
   const p = project("cloudplatform");
   p.taxonomy.categories.push({ id: "ComputeOrder", label: "Clash", parent: "", categoryOrder: [], memberOrder: [], orderLabel: "" });
   assert.match(lint(p).filter((i) => i.level === "error").map((i) => i.message).join("\n"), /The order of Compute is written as ComputeOrder/);
+});
+
+// ---------------------------------------------------------------- the type a category stands for (SReq 4.6, SD-17)
+
+test("a category keeps the element type it stands for: read from rdfs:seeAlso and written back (SReq 4.6)", () => {
+  const p = project("archimate4");
+  const linked = p.taxonomy.categories.filter((c) => c.standsFor);
+  assert.equal(linked.length, 14);
+  assert.equal(p.taxonomy.categories.find((c) => c.id === "ApplicationDomain").standsFor, "ApplicationDomainElement");
+  // A link to a strength collection is no type.
+  assert.equal(p.taxonomy.categories.find((c) => c.id === "StructuralRelationship").standsFor, "");
+  const ns = core.namespaces(p);
+  const tax = store(files(p).get("taxonomy").content);
+  assert.deepEqual(tax.getObjects(ns.am4tax + "ApplicationDomain", RDFS + "seeAlso", null).map((o) => o.value), [ns.am4 + "ApplicationDomainElement"]);
+  assert.equal(tax.getQuads(null, RDFS + "seeAlso", null, null).length, 14);
+});
+
+test("renaming and deleting reach the type a category stands for", () => {
+  const p = project("archimate4");
+  core.renameRef(p, "ApplicationDomainElement", "AppDomainElement", "concept");
+  assert.equal(p.taxonomy.categories.find((c) => c.id === "ApplicationDomain").standsFor, "AppDomainElement");
+  core.removeRef(p, "TechnologyDomainElement", "elements");
+  assert.equal(p.taxonomy.categories.find((c) => c.id === "TechnologyDomain").standsFor, "");
+});
+
+test("the link a category states is compared with its members; checks say where they differ (SReq 4.6, 11.6)", () => {
+  const p = project("archimate4");
+  const links = core.categoryLinks(p);
+  assert.equal(links.get("ApplicationDomain").stated.exact, true);
+  assert.deepEqual(links.get("CommonDomain").stated, { type: "CommonDomainElement", exact: false, extra: ["Grouping", "Location"], missing: [] });
+  const info = lint(p).filter((i) => i.level === "info").map((i) => i.message).join("\n");
+  assert.match(info, /Category CommonDomain stands for CommonDomainElement\. Grouping and Location are in it, yet no subtypes of it\./);
+  // A link to a relationship type is wrong; an empty category standing for a concrete type is read as that type.
+  p.taxonomy.categories.find((c) => c.id === "Junction").standsFor = "Serving";
+  p.taxonomy.categories.push({ id: "Devices", label: "Devices", parent: "", standsFor: "Device", categoryOrder: [], memberOrder: [], orderLabel: "" });
+  const found = lint(p);
+  assert.match(found.filter((i) => i.level === "warning").map((i) => i.message).join("\n"), /stands for, "Serving" is a relationship/);
+  assert.match(found.filter((i) => i.level === "info").map((i) => i.message).join("\n"), /Devices has nothing under it and stands for Device/);
+});
+
+// ---------------------------------------------------------------- the languages a project extends (SReq 12, SD-18)
+
+const bundled = () => Object.values(templates).map((t) => ({ namespace: core.conceptNamespace(t.project), project: t.project, bundled: true }));
+
+test("a project's imports say which languages it extends; the studio shows those it has (SReq 12.1–12.4)", () => {
+  const p = project("cloudplatform");
+  const bases = core.basesFor(p, bundled());
+  assert.deepEqual(bases.map((b) => [b.prefix, b.title, b.bundled]), [["am4", "ArchiMate 4.0", true]]);
+  const ctx = core.withBases(p, bases);
+  // Its types reach the core root through ArchiMate 4.0's, and inherit its categories.
+  assert.deepEqual(core.elementPaths(ctx, "Microservice").map((path) => path.join(">")), [
+    "arch:Element>am4:StructureElement>am4:ActiveStructureElement>am4:InternalActiveStructureElement>am4:ApplicationComponent>Workload>Microservice",
+    "arch:Element>am4:ApplicationDomainElement>am4:ApplicationComponent>Workload>Microservice",
+  ]);
+  assert.deepEqual(core.relationsOf(ctx, "Microservice").inherited.map((c) => [c.label, c.via]), [
+    ["Domain › Application Domain", "am4:ApplicationComponent"],
+    ["Aspect › Structure › Active Structure › Internal Active Structure", "am4:ApplicationComponent"],
+  ]);
+  assert.deepEqual(core.subtypes(ctx, "am4:ApplicationComponent"), ["Workload"]);
+  assert.deepEqual(core.relationshipPath(ctx, "am4:ReadAccess"), ["arch:QualifiedRelationship", "am4:Access", "am4:ReadAccess"]);
+  assert.equal(core.canSpecialize(ctx, "Cluster", "am4:Serving"), false, "a relationship type is no parent for an element type");
+  // A base type's own page: its subtypes, the project's included.
+  assert.deepEqual(core.relationsOf(ctx, "am4:Node").subtypes, ["PlatformResource"]);
+  // The project itself is as it was.
+  assert.deepEqual(p.externalConcepts, []);
+  assert.equal(p.attributes.length, 2);
+});
+
+test("checks say when a reference into a language the project extends names nothing there (SReq 12.5)", () => {
+  const p = project("cloudplatform");
+  p.elements.find((e) => e.id === "Cluster").parents = ["PlatformResource", "am4:Kubernetes"];
+  p.relationships.find((r) => r.id === "Usage").parent = "am4:Node";
+  const bases = core.basesFor(p, bundled());
+  const warnings = lint(p, { bases }).filter((i) => i.level === "warning").map((i) => i.message).join("\n");
+  assert.match(warnings, /Parent of Cluster "am4:Kubernetes" is not a type of ArchiMate 4\.0/);
+  assert.match(warnings, /Parent of Usage "am4:Node" is an element of ArchiMate 4\.0/);
+  assert.doesNotMatch(lint(p).map((i) => i.message).join("\n"), /am4:Kubernetes/, "without the base, nothing to compare with");
 });
 
 // ---------------------------------------------------------------- the rest

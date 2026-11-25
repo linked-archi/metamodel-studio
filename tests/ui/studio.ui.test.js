@@ -27,12 +27,14 @@ before(async () => {
 });
 after(async () => { if (browser) await browser.close(); });
 
-/** The page with the ArchiMate 4.0 template, nothing kept from before. */
-async function fresh(t) {
+/** The page with a template, ArchiMate 4.0 unless another is named, nothing kept from before. */
+async function fresh(t, template) {
   if (!page) { t.skip(why); return false; }
   await page.goto(PAGE);
   await page.evaluate(() => localStorage.clear());
   await page.reload();
+  // The page starts with Cloud Platform.
+  if (template === "cloudplatform") return true;
   await page.click("#btnNew");
   await page.locator("#menuNew .menu-item", { hasText: /^ArchiMate 4\.0/ }).click();
   return true;
@@ -183,6 +185,64 @@ test("a viewpoint moves to another catalog category by drag (SReq 11.3)", async 
   await drag(page.locator(`[data-scope="viewpoints"] .tv-row[data-id="${v.id}"]`).first(), page.locator(`[data-scope="viewpoints"] .tv-row[data-id="${cooperation.id}"]`));
   const after = (await project()).viewpoints.find((x) => x.id === v.id);
   assert.ok(after.categories.includes(cooperation.id) && !after.categories.includes(composition.id));
+});
+
+test("a project that extends ArchiMate 4.0 shows its types, and a drop on one specializes it (SReq 12.2)", async (t) => {
+  if (!(await fresh(t, "cloudplatform"))) return;
+  await go("elements", "Function");
+  const appDomain = "arch:Element/am4:ApplicationDomainElement";
+  assert.equal(await row("elements", `${appDomain}/am4:ApplicationComponent/Workload`).count(), 1, "Workload under ArchiMate's Application Component");
+  await drag(row("elements", `${appDomain}/am4:ApplicationComponent/Workload/Function`), row("elements", `${appDomain}/am4:ApplicationInterface`));
+  assert.deepEqual((await project()).elements.find((e) => e.id === "Function").parents, ["am4:ApplicationInterface"]);
+  // A base type is not the project's to move.
+  const before = JSON.stringify(await project());
+  await drag(row("elements", `${appDomain}/am4:ApplicationInterface`), row("elements", `${appDomain}/am4:ApplicationComponent`));
+  assert.equal(JSON.stringify(await project()), before);
+});
+
+test("a base type's page is read only and makes a subtype of it (SReq 12.3)", async (t) => {
+  if (!(await fresh(t, "cloudplatform"))) return;
+  await go("elements", "am4:Node");
+  assert.match(await page.locator(".card .detail-head").first().textContent(), /ArchiMate 4\.0/);
+  await page.locator(".card .detail-head button", { hasText: /^New subtype$/ }).click();
+  const added = (await project()).elements.find((e) => e.parents.includes("am4:Node") && e.id !== "PlatformResource");
+  assert.ok(added, "a new type under am4:Node");
+});
+
+test("the base's taxonomy shows where the project's types are through the types they specialize (SReq 12.4)", async (t) => {
+  if (!(await fresh(t, "cloudplatform"))) return;
+  await go("taxonomy", "Compute");
+  await page.locator('[data-scope="taxonomy"] .tv-row', { hasText: "ArchiMate 4.0 Concept Scheme" }).click();
+  const inherited = page.locator('[data-scope="taxonomy"] .tv-row.inherited', { hasText: "Microservice" });
+  assert.ok(await inherited.count() >= 1);
+  assert.match(await inherited.first().textContent(), /via Application Component/);
+});
+
+test("a category's stated type is edited on its page and written as rdfs:seeAlso (SReq 4.6)", async (t) => {
+  if (!(await fresh(t))) return;
+  await go("taxonomy", "CommonDomain");
+  const stated = page.locator(".field", { hasText: "Stands for (rdfs:seeAlso)" }).locator("select");
+  assert.equal(await stated.inputValue(), "CommonDomainElement");
+  await stated.selectOption("");
+  assert.equal((await project()).taxonomy.categories.find((c) => c.id === "CommonDomain").standsFor, "");
+  const tax = await page.evaluate(() => window.LAStudio.generator.generate(window.__studio.project).find((f) => f.kind === "taxonomy").content);
+  assert.doesNotMatch(tax.slice(tax.indexOf("am4tax:CommonDomain\n"), tax.indexOf("am4tax:CommonDomain\n") + 900), /rdfs:seeAlso am4:CommonDomainElement/);
+});
+
+test("a base the studio does not bundle is loaded from its documents (SReq 12.6)", async (t) => {
+  const dir = path.join(__dirname, "..", "..", "node_modules", "@linked-archi", "kernel", "assets", "archimate3");
+  const files = ["archimate3.2-onto.ttl", "archimate3.2-tax.ttl"].map((f) => path.join(dir, f));
+  if (!require("fs").existsSync(files[0])) { t.skip("the kernel's ArchiMate 3.2 documents are not installed"); return; }
+  if (!(await fresh(t, "cloudplatform"))) return;
+  await go("overview");
+  await page.locator("button", { hasText: "+ ArchiMate 3.2 (am:)" }).click();
+  await page.locator(".base-status button", { hasText: "Load its documents…" }).click();
+  assert.match(await page.locator("#importTitle").textContent(), /Load the documents of am:/);
+  await page.setInputFiles("#importFiles", files);
+  await page.click("#importGo");
+  await page.locator(".base-status", { hasText: "ArchiMate 3.2, loaded in this browser" }).waitFor();
+  await go("elements", "Microservice");
+  assert.ok(await page.locator('[data-scope="elements"] .tv-row[data-id^="am:"]').count() > 0, "ArchiMate 3.2's types in the tree");
 });
 
 test("no page error on any page", async (t) => {

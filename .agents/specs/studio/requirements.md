@@ -19,6 +19,7 @@ guarantees its users and the tools that read its output: la-gram and the Linked.
 - **Dimension.** A category whose sub-categories classify the same types another way than a sibling dimension does:
   ArchiMate 4.0's Domain and Aspect. The palette grouping names the dimensions a palette groups by.
 - **Row.** In a tree, an item under one of its parents. An item with two parents has two rows.
+- **Base.** A language a project extends or tailors, named by one of its imports: ArchiMate 4.0 for Cloud Platform.
 
 ---
 
@@ -77,6 +78,8 @@ guarantees its users and the tools that read its output: la-gram and the Linked.
 5. The palette grouping (the dimensions a palette groups element types by, the main one first) and the diagram group
    order (the groups a diagram keeps in bands, the top band first) are `skos:OrderedCollection`s of categories in the
    taxonomy document, named by the manifest (1.4). Each is written only when it names a category.
+6. A category may name the element type it stands for, the project's or a base's: `rdfs:seeAlso` from the category
+   to the class, as the published taxonomies link a concept to its class.
 
 ### Requirement 5: Viewpoints
 
@@ -103,7 +106,8 @@ guarantees its users and the tools that read its output: la-gram and the Linked.
 
 1. Any published Linked.Archi documents load, by file or URL, in any order and any subset.
 2. Import reads element and relationship types, attributes, rules from relationship shapes, attribute constraints,
-   the taxonomy, the orders under its categories, proposal orders (from the manifest's
+   the taxonomy, the type each category stands for (an `rdfs:seeAlso` to an element type; other links stay out), the
+   orders under its categories, proposal orders (from the manifest's
    `arch:relationshipProposalOrder`), the palette grouping and the diagram group order (from the manifest's
    `arch:paletteGrouping` and `arch:diagramGroupOrder`), viewpoints, the manifest and the notation in core-vis
    terms, own shapes included.
@@ -170,3 +174,24 @@ from the keyboard.
 7. Sibling categories, a category's members, the palette grouping, the diagram group order and proposal orders are
    ordered by drag, by Alt+Up and Alt+Down, and from the menu. The order is part of the project and is written
    (4.4, 4.5).
+8. A category's page names the type it stands for (4.6) and compares that type's subtypes with its members, as for
+   a match (11.6); where it names none and its members match a type, it offers to name that one.
+
+### Requirement 12: Extending a metamodel
+
+A metamodel that extends or tailors another shows that other one, its base, beside its own concepts.
+
+1. The bases of a project are the languages its imports name whose documents the studio has: ArchiMate 4.0, which it
+   carries, and any other whose documents were loaded in that browser. The project itself does not change: it names
+   its bases by their namespaces, as before.
+2. The trees of element and relationship types show a base's types, read only, with the project's own types under
+   the ones they specialize; a base branch with none of the project's types starts folded, and the base can be hidden.
+   The pickers, the rules matrix (on request) and the viewpoints' concepts offer a base's types too.
+3. A base type has a page of its own: its definition and relations, the project's types among its subtypes, and a way
+   to make a subtype of it. A drop of one of the project's types on a base type specializes it (11.3). Nothing of the
+   base can be moved or changed.
+4. A type's relations name the categories it has in a base's taxonomy, through the base types it is or specializes,
+   and the taxonomy page shows each base's taxonomy, read only, with the project's types in those categories.
+5. The checks say when a reference into a base names nothing it defines, or names a type of the wrong kind.
+6. The Overview says, for each import, whether the studio shows it, and loads the documents of one it does not
+   carry. Those documents stay in that browser.

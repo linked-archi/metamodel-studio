@@ -404,6 +404,8 @@
         [doc.ref("skos:topConceptOf"), c.parent ? null : doc.ref(`${T}:`)],
         [doc.ref("skos:broader"), c.parent ? doc.ref(c.parent, T) : null],
         [doc.ref("skos:narrower"), children.concat(members.get(c.id).map((id) => doc.ref(id, P)))],
+        // The element type it stands for, as the published taxonomies link a concept to its class (SReq 4.6, SD-17).
+        [doc.ref("rdfs:seeAlso"), c.standsFor ? doc.ref(c.standsFor, P) : null],
       ]);
     }
 

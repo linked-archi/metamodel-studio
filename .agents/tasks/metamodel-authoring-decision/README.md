@@ -1,7 +1,7 @@
 # One metamodel authoring engine (PD-16)
 
 **2026-11-22: moved to the platform's register.** The decision is PD-16 in
-`linked-archi-platform/docs/decisions.md`, status *Proposed*, gate *before F05 and W08*. The platform's
+`linked-archi-platform/docs/decisions.md`, gate *before F05 and W08*; accepted on 2026-11-24. The platform's
 `docs/plan.md` and the workspace's specification follow it. What is left is the kernel's K02 list, below.
 
 ## Where it changed what

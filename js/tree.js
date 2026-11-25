@@ -318,7 +318,7 @@
       h("span", { class: "tv-label" + (r.italic ? " abs" : "") }, r.label),
       r.badges || null,
       r.tag ? h("span", { class: "tag" }, r.tag) : null,
-      opts.menu ? h("button", {
+      opts.menu && !r.noMenu ? h("button", {
         class: "tv-more", type: "button", tabindex: "-1", "aria-label": `Actions for ${r.label}`, "data-nodrag": "",
         onclick: (e) => { e.stopPropagation(); openMenu(r, e.currentTarget); },
       }, "⋯") : null);

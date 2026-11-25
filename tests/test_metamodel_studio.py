@@ -170,6 +170,21 @@ class TestManifest(StudioTestCase):
         self.assertEqual(found["DomainOrder"], ("Domain", 7))
         self.assertEqual(found["CommonDomainOrder"], ("CommonDomain", 9))
 
+    def test_categories_link_to_the_class_they_stand_for(self):
+        # SReq 4.6: each category's rdfs:seeAlso to its OWL class, as the published taxonomy states it.
+        out = self.generate(self.template("archimate4"))
+        store = pyoxigraph.Store()
+        for name in ("archimate4-tax.ttl", "archimate4-onto.ttl"):
+            store.bulk_load(path=str(out / name), format=pyoxigraph.RdfFormat.TURTLE)
+        rows = list(store.query("""
+            PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+            PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+            PREFIX owl: <http://www.w3.org/2002/07/owl#>
+            SELECT ?concept ?class WHERE { ?concept a skos:Concept ; rdfs:seeAlso ?class . ?class a owl:Class . }"""))
+        links = {r["concept"].value.rsplit("#", 1)[-1]: r["class"].value.rsplit("#", 1)[-1] for r in rows}
+        self.assertEqual(len(links), 14)
+        self.assertEqual(links["ApplicationDomain"], "ApplicationDomainElement")
+
 
 @unittest.skipUnless(pyshacl, "pyshacl is not installed")
 class TestShapes(StudioTestCase):

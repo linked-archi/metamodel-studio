@@ -15,7 +15,7 @@ The studio is the writing side of the ecosystem. la-gram and the Linked.Archi wo
 `@linked-archi/kernel` (`../linked-archi-kernel`), so a generated set is right when the kernel reads from it what
 its author designed. The plan is for this engine to become the authoring engine behind the workspace's
 Administration screens: `specs/studio/plan.md`, and platform decision PD-16 in
-`linked-archi-platform/docs/decisions.md` (proposed; history in `tasks/metamodel-authoring-decision/`).
+`linked-archi-platform/docs/decisions.md` (accepted on 2026-11-24; history in `tasks/metamodel-authoring-decision/`).
 
 ## Principles
 

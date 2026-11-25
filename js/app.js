@@ -14,6 +14,7 @@
   const STORE_KEY = "la-metamodel-studio:project";
   const THEME_KEY = "la-metamodel-studio:theme";
   const VIEW_KEY = "la-metamodel-studio:view";
+  const BASES_KEY = "la-metamodel-studio:bases";
 
   // ------------------------------------------------------------------ state
 
@@ -35,6 +36,12 @@
     focusAfter: null,  // { scope, key, id }: the row to focus after the next render, when a move changes its key
   };
   const view = loadView();
+  // The languages the project extends (SReq 12, SD-18): those the studio has, and the project with their types
+  // added for showing (`ctx`). Never saved in the project; documents loaded for a base stay in this browser.
+  let loadedBases = loadBases();
+  let bases = [];
+  let ctx = project;
+  let labelIndex = null;
   const history = { undo: [], redo: [] };
   let pendingSnapshot = null;
   let issues = [];
@@ -55,9 +62,33 @@
     } catch (e) { return null; }
   }
 
+  /** The languages loaded from their documents in this browser: namespace -> { project, loaded }. */
+  function loadBases() {
+    try {
+      const found = JSON.parse(localStorage.getItem(BASES_KEY) || "{}") || {};
+      for (const x of Object.values(found)) if (x && x.project) x.project = core.normalize(x.project);
+      return found;
+    } catch (e) { return {}; }
+  }
+  function saveBases() {
+    try { localStorage.setItem(BASES_KEY, JSON.stringify(loadedBases)); return true; } catch (e) { return false; }
+  }
+  /** Where a base may come from: documents loaded in this browser first, then the studio's own templates. */
+  function baseCandidates() {
+    return Object.entries(loadedBases).map(([namespace, x]) => ({ namespace, project: x.project, bundled: false }))
+      .concat(Object.values(templates).map((t) => ({ namespace: core.conceptNamespace(t.project), project: t.project, bundled: true })));
+  }
+  function refreshBases() {
+    bases = core.basesFor(project, baseCandidates());
+    ctx = core.withBases(project, bases);
+    labelIndex = null;
+  }
+  /** Whether the trees show the bases' types: when there are any, unless this viewer hid them. */
+  const showingBases = () => bases.length > 0 && view.showBase !== false;
+
   /** What this viewer keeps between visits: folded rows, the taxonomy's view, whether relations show. Not project data. */
   function loadView() {
-    const fallback = { collapsed: {}, showMembers: true, relations: true, taxView: "tree" };
+    const fallback = { collapsed: {}, opened: {}, showMembers: true, relations: true, taxView: "tree", showBase: true, matrixBase: false };
     try { return Object.assign(fallback, JSON.parse(localStorage.getItem(VIEW_KEY) || "{}")); } catch (e) { return fallback; }
   }
   function saveView() {
@@ -128,7 +159,8 @@
 
   function changed(rerender) {
     persist();
-    issues = linter.lint(project);
+    refreshBases();
+    issues = linter.lint(project, { bases });
     if (rerender) render();
     else { renderSidebar(); renderTitle(); }
   }
@@ -261,7 +293,8 @@
   function elementOptions(includeAbstract) {
     const out = [];
     for (const e of project.elements) if (includeAbstract || !e.abstract) out.push({ value: e.id, label: (e.label || core.humanize(e.id)) + (e.abstract ? " (abstract)" : "") });
-    for (const x of project.externalConcepts) if ((x.kind || "element") === "element" && (includeAbstract || !x.abstract)) out.push({ value: x.ref, label: x.label || x.ref });
+    // Outside types: those the project declares, and the types of the languages it extends (SReq 12.2).
+    for (const x of ctx.externalConcepts) if ((x.kind || "element") === "element" && (includeAbstract || !x.abstract)) out.push({ value: x.ref, label: (x.label || x.ref) + (x.baseTitle ? ` (${x.baseTitle})` : "") });
     if (includeAbstract) out.push({ value: "arch:Element", label: "Element (core)" });
     return out;
   }
@@ -278,7 +311,12 @@
     while (cur.parent && byId.has(cur.parent) && guard++ < 20) { cur = byId.get(cur.parent); parts.unshift(cur.label || core.humanize(cur.id)); }
     return parts.join(" › ");
   }
-  const labelOf = (ref) => { const hit = core.conceptIndex(project).get(ref); return hit ? hit.label : ref; };
+  /** A concept's label: the project's own, an outside type's, or a base type's (SReq 12.2). */
+  const labelOf = (ref) => {
+    if (!labelIndex) labelIndex = core.conceptIndex(ctx);
+    const hit = labelIndex.get(ref);
+    return hit ? hit.label : ref;
+  };
 
   // ------------------------------------------------------------------ chrome
 
@@ -335,6 +373,7 @@
    * the row a move took it to (ui.focusAfter), or its item's first row (SReq 11.3).
    */
   function render() {
+    labelIndex = null;
     kit.closeMenu(false);
     closePopover();
     renderSidebar();
@@ -440,17 +479,47 @@
       viewImports());
   }
 
+  /** Whether the studio shows a language the project imports (SReq 12.1, 12.6), and how to load or forget its documents. */
+  function baseStatus(imp) {
+    const b = bases.find((x) => x.namespace === imp.namespace);
+    if (b && b.bundled) return h("span", { class: "muted" }, `${b.title}, from the studio's copy`);
+    if (b) {
+      return [h("span", { class: "muted" }, `${b.title}, loaded in this browser on ${(loadedBases[b.namespace] || {}).loaded || "?"} `),
+        h("button", { class: "btn small ghost", type: "button", onclick: () => forgetBase(b.namespace) }, "Forget")];
+    }
+    if (!imp.prefix || !/^https?:\/\//.test(imp.namespace || "")) return null;
+    return h("button", { class: "btn small", type: "button", onclick: () => openImport(imp) }, "Load its documents…");
+  }
+
+  function forgetBase(namespace) {
+    delete loadedBases[namespace];
+    saveBases();
+    changed(true);
+  }
+
+  /** What the studio keeps of a language loaded as a base: its types, attributes and taxonomy, not its rules or viewpoints. */
+  function compactBase(p) {
+    return core.normalize({
+      meta: { title: p.meta.title, name: p.meta.name, prefix: p.meta.prefix, baseIri: p.meta.baseIri, version: p.meta.version },
+      elements: p.elements.map((e) => ({ id: e.id, label: e.label, parents: e.parents, abstract: e.abstract, categories: e.categories, definition: e.definition, notation: e.notation && e.notation.fill ? { fill: e.notation.fill } : {} })),
+      relationships: p.relationships.map((r) => ({ id: r.id, label: r.label, parent: r.parent, notation: r.notation, predicate: r.predicate, definition: r.definition, categories: r.categories })),
+      attributes: p.attributes,
+      taxonomy: p.taxonomy,
+    });
+  }
+
   function viewImports() {
     const m = project.meta;
     const known = core.KNOWN_LANGUAGES.filter((l) => !m.imports.some((i) => i.prefix === l.prefix));
     return h("div", { class: "card" },
       h("h3", {}, "Extending other languages"),
-      h("p", { class: "muted small" }, "Import a published language to specialize its element types (e.g. a Microservice that is an am4:ApplicationComponent). Declare the external types you refer to, so they can be parents, rule endpoints and viewpoint members."),
+      h("p", { class: "muted small" }, "Import a published language to specialize its element types (e.g. a Microservice that is an am4:ApplicationComponent). The studio shows the types of a language you extend, read only, in its trees, with yours under the ones they specialize: ArchiMate 4.0 is built in, and another is shown once its documents are loaded. Declare any other external types you refer to, so they can be parents, rule endpoints and viewpoint members."),
       h("table", { class: "tbl" },
-        h("thead", {}, h("tr", {}, h("th", {}, "Prefix"), h("th", {}, "Namespace"), h("th", {}))),
+        h("thead", {}, h("tr", {}, h("th", {}, "Prefix"), h("th", {}, "Namespace"), h("th", {}, "Shown"), h("th", {}))),
         h("tbody", {}, m.imports.map((imp, i) => h("tr", {},
           h("td", { style: { width: "120px" } }, textInput(() => imp.prefix, (v) => { imp.prefix = v.trim(); }, { class: "mono" })),
-          h("td", {}, textInput(() => imp.namespace, (v) => { imp.namespace = v.trim(); }, { class: "mono" })),
+          h("td", {}, textInput(() => imp.namespace, (v) => { imp.namespace = v.trim(); }, { class: "mono" }, { onCommit: () => mutate(() => {}) })),
+          h("td", { class: "small base-status" }, baseStatus(imp)),
           h("td", { style: { width: "40px" } }, h("button", { class: "btn small ghost", title: "Remove", onclick: () => mutate(() => m.imports.splice(i, 1)) }, "×")))))),
       h("div", { class: "row", style: { marginTop: "8px" } },
         known.map((l) => h("button", { class: "btn small", onclick: () => mutate(() => m.imports.push({ prefix: l.prefix, namespace: l.namespace })) }, `+ ${l.label} (${l.prefix}:)`)),
@@ -533,12 +602,17 @@
   // ------------------------------------------------------------------ trees: rows, choosing, moving (SReq 11, SD-12)
 
   const collapsedSet = (tab) => new Set(view.collapsed[tab] || []);
+  const openedSet = (tab) => new Set((view.opened || {})[tab] || []);
+  /** Whether a row is open: as this viewer left it, or `dflt`. A base type is folded at first unless one of the project's types is under it. */
+  const isOpen = (tab, key, dflt) => (collapsedSet(tab).has(key) ? false : openedSet(tab).has(key) ? true : dflt);
   /** Fold or unfold a row; this viewer keeps it between visits. */
   function setOpen(tab, key, open) {
-    const set = collapsedSet(tab);
-    if (open) set.delete(key); else set.add(key);
+    const closed = collapsedSet(tab);
+    const opened = openedSet(tab);
+    if (open) { closed.delete(key); opened.add(key); } else { closed.add(key); opened.delete(key); }
     // Rows that moved leave keys behind: keep the latest few hundred.
-    view.collapsed[tab] = [...set].slice(-400);
+    view.collapsed[tab] = [...closed].slice(-400);
+    view.opened = Object.assign({}, view.opened, { [tab]: [...opened].slice(-400) });
     saveView();
   }
   /** Unfold every row of `id`, so that what was just put under it shows. */
@@ -665,9 +739,11 @@
 
   /** A link to a concept's page; a type the project does not define is named, not linked. */
   function refLink(ref) {
-    const hit = core.conceptIndex(project).get(ref);
-    if (!hit || !hit.local) return h("span", { class: "muted", title: ref }, labelOf(ref) === ref ? ref : `${labelOf(ref)}`);
-    return h("a", { href: "#", title: `${project.meta.prefix}:${ref}`, onclick: (ev) => { ev.preventDefault(); go(hit.kind === "relationship" ? "relationships" : "elements", ref); } }, labelOf(ref));
+    const hit = core.conceptIndex(ctx).get(ref);
+    const base = core.baseConcept(ctx, ref);
+    if (!hit || (!hit.local && !base)) return h("span", { class: "muted", title: ref }, labelOf(ref) === ref ? ref : `${labelOf(ref)}`);
+    // A type of a language the project extends opens its read-only page (SReq 12.3).
+    return h("a", { href: "#", class: base ? "base-link" : null, title: base ? `${ref}, ${base.baseTitle}` : `${project.meta.prefix}:${ref}`, onclick: (ev) => { ev.preventDefault(); go(hit.kind === "relationship" ? "relationships" : "elements", ref); } }, labelOf(ref));
   }
   function catLink(id) {
     return h("a", { href: "#", title: `${project.meta.prefix}tax:${id}`, onclick: (ev) => { ev.preventDefault(); ui.taxMember = ""; view.taxView = "tree"; go("taxonomy", id); } }, catPathLabel(id));
@@ -678,11 +754,16 @@
    * How a category and an abstract type match (SReq 11.6): exactly, or closely with what differs, each difference
    * with a fix. `from` is the page it is shown on: the category's or the type's.
    */
-  function matchView(m, from) {
+  function matchView(m, from, stated) {
     const names = (ids) => ids.map(labelOf).join(", ");
-    const head = m.exact
-      ? (from === "category" ? ["Its element types are exactly the subtypes of ", refLink(m.type), "."] : ["Its subtypes are exactly the element types of ", catLink(m.category), "."])
-      : (from === "category" ? ["Its element types are nearly the subtypes of ", refLink(m.type), "."] : ["Its subtypes are nearly the element types of ", catLink(m.category), "."]);
+    // A link the taxonomy states (SReq 4.6) is told as such; one its members suggest, as a match (SReq 11.6).
+    const head = stated
+      ? (from === "category"
+        ? ["It stands for ", refLink(m.type), m.exact ? ". Its element types are exactly that type's subtypes." : ". Its element types differ from that type's subtypes."]
+        : [catLink(m.category), m.exact ? " stands for it. Its element types are exactly its subtypes." : " stands for it. Its element types differ from its subtypes."])
+      : m.exact
+        ? (from === "category" ? ["Its element types are exactly the subtypes of ", refLink(m.type), "."] : ["Its subtypes are exactly the element types of ", catLink(m.category), "."])
+        : (from === "category" ? ["Its element types are nearly the subtypes of ", refLink(m.type), "."] : ["Its subtypes are nearly the element types of ", catLink(m.category), "."]);
     return h("div", { class: "match " + (m.exact ? "exact" : "close") }, head,
       m.extra.length ? h("div", { class: "match-diff" }, `In ${catLabel(m.category)} but no subtype of ${labelOf(m.type)}: ${names(m.extra)}. `,
         h("button", { class: "btn small", type: "button", onclick: () => mutate(() => m.extra.forEach((x) => core.addParent(project, x, m.type))) }, m.extra.length === 1 ? "Make it a subtype" : "Make them subtypes"), " ",
@@ -704,7 +785,7 @@
 
   /** What a type is related to (SReq 11.4): a diagram, and the same in lists for keyboards and screen readers. */
   function relationsPanel(ref) {
-    const r = core.relationsOf(project, ref);
+    const r = core.relationsOf(ctx, ref);
     if (!r) return null;
     const box = h("details", { class: "relations", open: view.relations !== false ? true : null });
     box.addEventListener("toggle", () => { view.relations = box.open; saveView(); });
@@ -717,8 +798,18 @@
         path.map((x, i) => [i ? h("span", { class: "sep", "aria-hidden": "true" }, "›") : null, x === ref ? h("b", {}, labelOf(x)) : refLink(x)])))),
       block(`Subtypes${r.subtypes.length ? ` (${r.subtypes.length}${r.descendants > r.subtypes.length ? `, ${r.descendants} in all` : ""})` : ""}`, links(r.subtypes.map(refLink))),
       block("Categories", links(r.categories.map((c) => catLink(c.id)))),
+      // Those it has in a language the project extends, through the base types it is or specializes (SReq 12.4).
+      bases.length ? block(`Categories in ${bases.map((b) => b.title).join(", ")}`, links(r.inherited.map((c) => h("div", {}, c.label, via(c.via))))) : null,
     ];
-    if (!isRel && r.abstract) blocks.push(block("Categories with its subtypes", r.matches.map((m) => matchView(m, "type"))));
+    if (!isRel && r.local && r.abstract) {
+      // The categories that say they stand for it, then those whose members match its subtypes (SReq 4.6, 11.6).
+      const linked = [];
+      for (const [category, l] of core.categoryLinks(project)) {
+        if (l.stated && l.stated.type === ref) linked.push(matchView(Object.assign({ category }, l.stated), "type", true));
+        else if (l.computed && l.computed.type === ref) linked.push(matchView(Object.assign({ category }, l.computed), "type"));
+      }
+      blocks.push(block("Categories that stand for it", linked));
+    }
     if (isRel) {
       blocks.push(block(`Sources (${r.sources.length})`, links(r.sources.map(refLink))));
       blocks.push(block(`Targets (${r.targets.length})`, links(r.targets.map(refLink))));
@@ -737,7 +828,14 @@
         return h("div", {}, g.side === "domain" ? "Source of " : "Target of ", g.rels.map((rel, i) => [i ? ", " : "", refLink(rel)]), via(g.via));
       }))));
     }
-    blocks.push(block("Attributes", links(r.attributes.map((a) => h("div", {}, h("a", { href: "#", onclick: (ev) => { ev.preventDefault(); go("attributes", a.id); } }, labelOf(a.id)), via(a.via))))));
+    blocks.push(block("Attributes", links(r.attributes.map((a) => {
+      const attr = ctx.attributes.find((x) => x.id === a.id) || {};
+      // A base's attribute is named, with its language; the project's own opens its page.
+      const name = attr.base
+        ? h("span", { title: a.id }, `${attr.label || core.humanize(a.id.slice(a.id.indexOf(":") + 1))} (${attr.baseTitle})`)
+        : h("a", { href: "#", onclick: (ev) => { ev.preventDefault(); go("attributes", a.id); } }, attr.label || core.humanize(a.id));
+      return h("div", {}, name, via(a.via));
+    }))));
     blocks.push(block("Proposal orders", links(r.proposalOrders.map((o) => {
       const order = project.proposalOrders.find((x) => x.id === o.id) || {};
       const name = order.label || core.humanize(o.id);
@@ -810,10 +908,14 @@
       if (open) g.addEventListener("click", open);
     };
     const opener = (ref) => {
-      const hit = ref ? core.conceptIndex(project).get(ref) : null;
-      return hit && hit.local && ref !== r.ref ? () => go(hit.kind === "relationship" ? "relationships" : "elements", ref) : null;
+      const hit = ref ? core.conceptIndex(ctx).get(ref) : null;
+      return hit && (hit.local || core.baseConcept(ctx, ref)) && ref !== r.ref ? () => go(hit.kind === "relationship" ? "relationships" : "elements", ref) : null;
     };
-    const kind = (ref) => { const hit = core.conceptIndex(project).get(ref); return !ref ? "more" : hit && hit.local ? "" : "outside"; };
+    const kind = (ref) => {
+      if (!ref) return "more";
+      const hit = core.conceptIndex(ctx).get(ref);
+      return hit && hit.local ? "" : core.baseConcept(ctx, ref) ? "base" : "outside";
+    };
     for (const n of top) node(n, kind(n.ref), opener(n.ref));
     node(self, "self", null);
     for (const n of bottom) node(n, kind(n.ref), opener(n.ref));
@@ -823,25 +925,32 @@
 
   // ------------------------------------------------------------------ elements
 
-  /** The element hierarchy (SReq 11.1): each type under each of its parents, a parent of another language as an anchor. */
+  /**
+   * The element hierarchy (SReq 11.1, 12.2): each type under each of its parents. The types of a language the
+   * project extends come in, read only, with the project's own types where they specialize them; any other parent of
+   * another language is an anchor.
+   */
   function elementTree(filter) {
-    const collapsed = collapsedSet("elements");
-    const byId = new Map(project.elements.map((e) => [e.id, e]));
+    const withBase = showingBases();
+    const own = new Map(project.elements.map((e) => [e.id, e]));
+    const base = new Map(withBase ? ctx.externalConcepts.filter((x) => x.base && x.kind === "element").map((x) => [x.ref, x]) : []);
     const kids = new Map();
-    for (const e of project.elements) {
-      for (const p of e.parents.length ? e.parents : [core.ELEMENT_ROOT]) {
-        if (!kids.has(p)) kids.set(p, []);
-        kids.get(p).push(e.id);
-      }
-    }
-    const sorted = (ids) => ids.slice().sort((a, b) => labelOf(a).localeCompare(labelOf(b)) || a.localeCompare(b));
+    const put = (parent, child) => { if (!kids.has(parent)) kids.set(parent, []); kids.get(parent).push(child); };
+    for (const e of project.elements) for (const p of e.parents.length ? e.parents : [core.ELEMENT_ROOT]) put(p, e.id);
+    for (const x of base.values()) for (const p of x.parents) put(p, x.ref);
+    // A base type starts open when one of the project's types is under it.
+    const ownBelow = new Set();
+    if (withBase) for (const e of project.elements) for (const a of core.ancestors(ctx, e.id)) ownBelow.add(a);
+    const sorted = (ids) => ids.slice().sort((a, b) => (own.has(b) - own.has(a)) || labelOf(a).localeCompare(labelOf(b)) || a.localeCompare(b));
     const memo = new Map();
     const shows = (id, trail) => {
       if (!filter) return true;
       if (memo.has(id)) return memo.get(id);
       if (trail.has(id)) return false;
-      const e = byId.get(id);
-      const hit = (!!e && matches(filter, id, e.label, ...e.altLabels)) || (kids.get(id) || []).some((k) => shows(k, new Set(trail).add(id)));
+      const e = own.get(id);
+      const x = base.get(id);
+      const hit = (!!e && matches(filter, id, e.label, ...e.altLabels)) || (!!x && matches(filter, id, x.label))
+        || (kids.get(id) || []).some((k) => shows(k, new Set(trail).add(id)));
       memo.set(id, hit);
       return hit;
     };
@@ -850,44 +959,53 @@
     const walk = (parent, parentKey, depth, trail) => {
       for (const id of sorted(kids.get(parent) || [])) {
         if (trail.has(id) || !shows(id, new Set())) continue;
-        const e = byId.get(id);
         const key = `${parentKey}/${id}`;
         const below = kids.get(id) || [];
-        const expanded = !!filter || !collapsed.has(key);
-        const others = e.parents.filter((p) => p !== parent);
-        const row = {
-          key, parentKey, depth, id, from: parent, group: "element", kind: e.abstract ? "abstract" : "element",
-          label: e.label || core.humanize(id), italic: e.abstract, title: `${P}:${id}`,
-          swatch: e.abstract ? undefined : (e.notation && e.notation.fill) || "transparent",
-          tag: e.abstract ? "abstract" : null,
-          badges: others.length ? h("span", { class: "pill tiny", title: `Also under ${others.map(labelOf).join(", ")}` }, `+${others.length} parent${others.length > 1 ? "s" : ""}`) : null,
-          expandable: below.length > 0, expanded,
-        };
-        row.drag = dragOf("elements", row, "element", (x) => ({ id: x.id, from: x.from }));
+        const e = own.get(id);
+        let row;
+        if (e) {
+          const others = e.parents.filter((p) => p !== parent);
+          row = {
+            key, parentKey, depth, id, from: parent, group: "element", kind: e.abstract ? "abstract" : "element",
+            label: e.label || core.humanize(id), italic: e.abstract, title: `${P}:${id}`,
+            swatch: e.abstract ? undefined : (e.notation && e.notation.fill) || "transparent",
+            tag: e.abstract ? "abstract" : null,
+            badges: others.length ? h("span", { class: "pill tiny", title: `Also under ${others.map(labelOf).join(", ")}` }, `+${others.length} parent${others.length > 1 ? "s" : ""}`) : null,
+            expandable: below.length > 0, expanded: !!filter || isOpen("elements", key, true),
+          };
+          row.drag = dragOf("elements", row, "element", (x) => ({ id: x.id, from: x.from }));
+        } else {
+          const x = base.get(id);
+          row = {
+            key, parentKey, depth, id, from: parent, group: "base", kind: "base", label: x.label, italic: x.abstract,
+            title: `${id}, ${x.baseTitle}: read only`, swatch: x.abstract ? undefined : x.fill || "transparent",
+            tag: x.abstract ? "abstract" : id.slice(0, id.indexOf(":")),
+            expandable: below.length > 0, expanded: !!filter || isOpen("elements", key, ownBelow.has(id)),
+          };
+        }
         row.drop = elementDrop(row);
         rows.push(row);
-        if (below.length && expanded) walk(id, key, depth + 1, new Set(trail).add(id));
+        if (below.length && row.expanded) walk(id, key, depth + 1, new Set(trail).add(id));
       }
     };
     const anchor = (ref, label, tag, kind) => {
       const below = kids.get(ref) || [];
       if (kind !== "root" && !below.length) return;
       if (filter && !below.some((k) => shows(k, new Set()))) return;
-      const expanded = !!filter || !collapsed.has(ref);
-      const row = { key: ref, parentKey: null, depth: 0, id: ref, group: "anchor", kind, label, tag, title: ref, expandable: below.length > 0, expanded };
+      const row = { key: ref, parentKey: null, depth: 0, id: ref, group: "anchor", kind, label, tag, title: ref, expandable: below.length > 0, expanded: !!filter || isOpen("elements", ref, true) };
       row.drop = elementDrop(row);
       rows.push(row);
-      if (expanded) walk(ref, ref, 1, new Set());
+      if (row.expanded) walk(ref, ref, 1, new Set());
     };
     anchor(core.ELEMENT_ROOT, "Element", "core", "root");
-    // A parent of another language: its name, and its prefix as the tag (the title holds the whole reference).
-    for (const ref of sorted([...kids.keys()].filter((p) => p !== core.ELEMENT_ROOT && !byId.has(p)))) {
+    // A parent of another language the studio does not show: its name, and its prefix as the tag.
+    for (const ref of [...kids.keys()].filter((p) => p !== core.ELEMENT_ROOT && !own.has(p) && !base.has(p)).sort()) {
       anchor(ref, labelOf(ref) === ref ? core.humanize(ref.slice(ref.indexOf(":") + 1)) : labelOf(ref), core.isCurie(ref) ? ref.slice(0, ref.indexOf(":")) : "outside", "anchor");
     }
-    markSelection("elements", rows, ui.sel.elements, (r) => r.group === "element");
+    markSelection("elements", rows, ui.sel.elements, (r) => r.group === "element" || r.group === "base");
     return {
       name: "elements", label: "Element types", rows,
-      onSelect: (r, mods) => chooseRow("elements", r, mods, (x) => { if (x.group === "element") { ui.selKey.elements = x.key; go("elements", x.id); } }),
+      onSelect: (r, mods) => chooseRow("elements", r, mods, (x) => { if (x.group === "element" || x.group === "base") { ui.selKey.elements = x.key; go("elements", x.id); } }),
       onToggle: (r, open) => { setOpen("elements", r.key, open); render(); },
       menu: elementMenu,
       onMove: elementKeyMove,
@@ -906,7 +1024,7 @@
           if (!leaving.length) return { ok: false, hint: "Already at the top" };
           return { ok: true, hint: leaving.length === 1 ? `Stop specializing ${labelOf(leaving[0].from)}` : "Leave the parents they are under", run: () => change(() => leaving.forEach((it) => core.removeParent(project, it.id, it.from))) };
         }
-        const refused = p.items.find((it) => !core.canSpecialize(project, it.id, to));
+        const refused = p.items.find((it) => !core.canSpecialize(ctx, it.id, to));
         if (refused) return { ok: false, hint: refused.id === to ? "Not under itself" : `${labelOf(to)} is one of its subtypes` };
         if (alt) {
           const adding = p.items.filter((it) => !core.parentsOf(project, it.id).includes(to));
@@ -921,6 +1039,14 @@
   }
 
   function elementMenu(row) {
+    if (row.group === "base") {
+      return [
+        { label: "Open", run: () => { ui.selKey.elements = row.key; go("elements", row.id); } },
+        "-",
+        { label: "New subtype of it", run: () => addElement(false, row.id) },
+        { label: "New abstract subtype of it", run: () => addElement(true, row.id) },
+      ];
+    }
     if (row.group === "anchor") {
       return [
         { label: row.kind === "root" ? "New element type" : "New subtype", run: () => addElement(false, row.id) },
@@ -973,10 +1099,20 @@
     change(() => core.moveParent(project, row.id, row.from, parentRow.from));
   }
 
+  /** The switch that shows or hides the types of the languages the project extends (SReq 12.2), when there are any. */
+  function baseSwitch() {
+    if (!bases.length) return null;
+    const box = h("input", { type: "checkbox" });
+    box.checked = view.showBase !== false;
+    box.addEventListener("change", () => { view.showBase = box.checked; saveView(); render(); });
+    return h("label", { class: "check small base-switch", title: "Their types are shown read only; yours can specialize them." }, box, `Show ${bases.map((b) => b.title).join(", ")}`);
+  }
+
   function viewElements() {
     const tools = [
       h("button", { class: "btn small", onclick: () => addElement(false) }, "+ Element"),
       h("button", { class: "btn small", onclick: () => addElement(true) }, "+ Abstract"),
+      baseSwitch(),
     ];
     return h("div", {},
       pageHead("Element types", "Each becomes an owl:Class under arch:Element. A type with two parents appears under both. Drag a type onto another to move it there, or hold Alt to add a parent instead; each row's ⋯ menu does the same, and Alt+Right and Alt+Left move the focused row in and out."),
@@ -997,9 +1133,27 @@
     });
   }
 
+  /**
+   * A type of a language the project extends (SReq 12.3): read only here, with what it is related to, the project's
+   * types among them, and a way to specialize it.
+   */
+  function baseDetail(ref) {
+    const x = core.baseConcept(ctx, ref);
+    if (!x) return null;
+    const isRel = x.kind === "relationship";
+    return h("div", { class: "card" },
+      h("div", { class: "detail-head" }, h("h2", {}, x.label), h("span", { class: "pill" }, ref), h("span", { class: "pill accent" }, x.baseTitle),
+        x.abstract ? h("span", { class: "pill" }, "abstract") : null,
+        h("button", { class: "btn small", onclick: () => (isRel ? addRelationship(ref) : addElement(false, ref)) }, isRel ? "New kind of it" : "New subtype"),
+        isRel ? null : h("button", { class: "btn small", onclick: () => addElement(true, ref) }, "New abstract subtype")),
+      h("p", { class: "small muted" }, `A type of ${x.baseTitle}, which this metamodel extends: read only here. Your types can specialize it; drag one onto it, or use its menu.`),
+      x.definition ? h("p", { class: "base-def" }, x.definition) : null,
+      relationsPanel(ref));
+  }
+
   function elementDetail(id) {
     const e = project.elements.find((x) => x.id === id);
-    if (!e) return null;
+    if (!e) return baseDetail(id);
     const parentOpts = elementOptions(true).filter((o) => o.value !== e.id && !core.descendants(project, e.id).has(o.value));
     const n = e.notation || (e.notation = {});
     const setCategories = (list) => {
@@ -1118,24 +1272,30 @@
 
   // ------------------------------------------------------------------ relationships
 
-  /** The relationship types as a tree by what each is a kind of (SReq 11.1), a parent of another language as an anchor. */
+  /**
+   * The relationship types as a tree of what each is a kind of (SReq 11.1, 12.2). The types of a language the
+   * project extends come in, read only, with the project's own under them; any other parent is an anchor.
+   */
   function relationshipTree(filter) {
-    const collapsed = collapsedSet("relationships");
-    const byId = new Map(project.relationships.map((r) => [r.id, r]));
+    const withBase = showingBases();
+    const own = new Map(project.relationships.map((r) => [r.id, r]));
+    const base = new Map(withBase ? ctx.externalConcepts.filter((x) => x.base && x.kind === "relationship").map((x) => [x.ref, x]) : []);
     const kids = new Map();
-    for (const r of project.relationships) {
-      const p = r.parent || core.RELATIONSHIP_ROOT;
-      if (!kids.has(p)) kids.set(p, []);
-      kids.get(p).push(r.id);
-    }
-    const sorted = (ids) => ids.slice().sort((a, b) => labelOf(a).localeCompare(labelOf(b)) || a.localeCompare(b));
+    const put = (parent, child) => { if (!kids.has(parent)) kids.set(parent, []); kids.get(parent).push(child); };
+    for (const r of project.relationships) put(r.parent || core.RELATIONSHIP_ROOT, r.id);
+    for (const x of base.values()) put(x.parents[0] || core.RELATIONSHIP_ROOT, x.ref);
+    const ownBelow = new Set();
+    if (withBase) for (const r of project.relationships) for (const a of core.relationshipPath(ctx, r.id)) ownBelow.add(a);
+    const sorted = (ids) => ids.slice().sort((a, b) => (own.has(b) - own.has(a)) || labelOf(a).localeCompare(labelOf(b)) || a.localeCompare(b));
     const memo = new Map();
     const shows = (id, trail) => {
       if (!filter) return true;
       if (memo.has(id)) return memo.get(id);
       if (trail.has(id)) return false;
-      const r = byId.get(id);
-      const hit = (!!r && matches(filter, id, r.label, r.predicate, r.notation)) || (kids.get(id) || []).some((k) => shows(k, new Set(trail).add(id)));
+      const r = own.get(id);
+      const x = base.get(id);
+      const hit = (!!r && matches(filter, id, r.label, r.predicate, r.notation)) || (!!x && matches(filter, id, x.label, x.notation))
+        || (kids.get(id) || []).some((k) => shows(k, new Set(trail).add(id)));
       memo.set(id, hit);
       return hit;
     };
@@ -1144,39 +1304,47 @@
     const walk = (parent, parentKey, depth, trail) => {
       for (const id of sorted(kids.get(parent) || [])) {
         if (trail.has(id) || !shows(id, new Set())) continue;
-        const r = byId.get(id);
         const key = `${parentKey}/${id}`;
         const below = kids.get(id) || [];
-        const expanded = !!filter || !collapsed.has(key);
-        const row = {
-          key, parentKey, depth, id, from: parent, group: "relationship", kind: "relationship", icon: "↗",
-          label: r.label || core.humanize(id), title: `${P}:${id}`, tag: [r.notation, r.predicate].filter(Boolean).join(" · "),
-          expandable: below.length > 0, expanded,
-        };
-        row.drag = dragOf("relationships", row, "relationship", (x) => ({ id: x.id, from: x.from }));
+        const r = own.get(id);
+        let row;
+        if (r) {
+          row = {
+            key, parentKey, depth, id, from: parent, group: "relationship", kind: "relationship", icon: "↗",
+            label: r.label || core.humanize(id), title: `${P}:${id}`, tag: [r.notation, r.predicate].filter(Boolean).join(" · "),
+            expandable: below.length > 0, expanded: !!filter || isOpen("relationships", key, true),
+          };
+          row.drag = dragOf("relationships", row, "relationship", (x) => ({ id: x.id, from: x.from }));
+        } else {
+          const x = base.get(id);
+          row = {
+            key, parentKey, depth, id, from: parent, group: "base", kind: "base", icon: "↗", label: x.label,
+            title: `${id}, ${x.baseTitle}: read only`, tag: [x.notation, id.slice(0, id.indexOf(":"))].filter(Boolean).join(" · "),
+            expandable: below.length > 0, expanded: !!filter || isOpen("relationships", key, ownBelow.has(id)),
+          };
+        }
         row.drop = relationshipDrop(row);
         rows.push(row);
-        if (below.length && expanded) walk(id, key, depth + 1, new Set(trail).add(id));
+        if (below.length && row.expanded) walk(id, key, depth + 1, new Set(trail).add(id));
       }
     };
     const anchor = (ref, label, tag, kind) => {
       const below = kids.get(ref) || [];
       if (kind !== "root" && !below.length) return;
       if (filter && !below.some((k) => shows(k, new Set()))) return;
-      const expanded = !!filter || !collapsed.has(ref);
-      const row = { key: ref, parentKey: null, depth: 0, id: ref, group: "anchor", kind, label, tag, title: ref, expandable: below.length > 0, expanded };
+      const row = { key: ref, parentKey: null, depth: 0, id: ref, group: "anchor", kind, label, tag, title: ref, expandable: below.length > 0, expanded: !!filter || isOpen("relationships", ref, true) };
       row.drop = relationshipDrop(row);
       rows.push(row);
-      if (expanded) walk(ref, ref, 1, new Set());
+      if (row.expanded) walk(ref, ref, 1, new Set());
     };
     anchor(core.RELATIONSHIP_ROOT, "Qualified relationship", "core", "root");
-    for (const ref of sorted([...kids.keys()].filter((p) => p !== core.RELATIONSHIP_ROOT && !byId.has(p)))) {
+    for (const ref of [...kids.keys()].filter((p) => p !== core.RELATIONSHIP_ROOT && !own.has(p) && !base.has(p)).sort()) {
       anchor(ref, labelOf(ref) === ref && core.isCurie(ref) ? core.humanize(ref.slice(ref.indexOf(":") + 1)) : labelOf(ref), core.isCurie(ref) ? ref.slice(0, ref.indexOf(":")) : "outside", "anchor");
     }
-    markSelection("relationships", rows, ui.sel.relationships, (r) => r.group === "relationship");
+    markSelection("relationships", rows, ui.sel.relationships, (r) => r.group === "relationship" || r.group === "base");
     return {
       name: "relationships", label: "Relationship types", rows,
-      onSelect: (r, mods) => chooseRow("relationships", r, mods, (x) => { if (x.group === "relationship") { ui.selKey.relationships = x.key; go("relationships", x.id); } }),
+      onSelect: (r, mods) => chooseRow("relationships", r, mods, (x) => { if (x.group === "relationship" || x.group === "base") { ui.selKey.relationships = x.key; go("relationships", x.id); } }),
       onToggle: (r, open) => { setOpen("relationships", r.key, open); render(); },
       menu: relationshipMenu,
       onMove: relationshipKeyMove,
@@ -1201,6 +1369,13 @@
 
   function relationshipMenu(row) {
     if (row.group === "anchor") return [{ label: row.kind === "root" ? "New relationship type" : "New kind of it", run: () => addRelationship(row.kind === "root" ? "" : row.id) }];
+    if (row.group === "base") {
+      return [
+        { label: "Open", run: () => { ui.selKey.relationships = row.key; go("relationships", row.id); } },
+        "-",
+        { label: "New kind of it", run: () => addRelationship(row.id) },
+      ];
+    }
     const r = project.relationships.find((x) => x.id === row.id);
     if (!r) return [];
     const at = () => rowAnchor("relationships", row.key);
@@ -1252,7 +1427,7 @@
   }
 
   function viewRelationships() {
-    const tools = [h("button", { class: "btn small", onclick: () => addRelationship() }, "+ Relationship")];
+    const tools = [h("button", { class: "btn small", onclick: () => addRelationship() }, "+ Relationship"), baseSwitch()];
     return h("div", {},
       pageHead("Relationship types", "Each becomes three terms, as in the published languages: a QualifiedRelationship subclass (the relationship as a resource), its direct predicate (arch:unqualifiedForm) for traversal, and a qualified predicate to navigate to the resource. Drag a type onto another to make it a kind of it."),
       masterDetail("relationships", { tree: relationshipTree, tools, detail: relationshipDetail, emptyText: "No relationship types yet." }));
@@ -1273,7 +1448,7 @@
 
   function relationshipDetail(id) {
     const r = project.relationships.find((x) => x.id === id);
-    if (!r) return null;
+    if (!r) return baseDetail(id);
     const P = project.meta.prefix;
     const pred = r.predicate || core.suggestPredicate(r.id);
     const s = r.style || (r.style = {});
@@ -1403,7 +1578,8 @@
     if (ui.matrixRel && !rels.some((r) => r.id === ui.matrixRel)) ui.matrixRel = "";
     const relSel = select([{ value: "", label: "All relationships (letters)" }].concat(rels.map((r) => ({ value: r.id, label: `${r.notation ? r.notation + " — " : ""}${r.label || r.id}` }))), () => ui.matrixRel, (v) => { ui.matrixRel = v; });
     const catSel = (key) => select([{ value: "", label: "All" }].concat(catOptions()), () => ui[key], (v) => { ui[key] = v; });
-    const concrete = core.concreteElements(project);
+    // With the switch on, the concrete types of the languages the project extends are rows and columns too (SReq 12.2).
+    const concrete = core.concreteElements(view.matrixBase && bases.length ? ctx : project);
     const inCat = (cat) => (id) => {
       if (!cat) return true;
       const item = project.elements.find((e) => e.id === id);
@@ -1449,6 +1625,12 @@
       pageHead("Relationship rules", "Which relationship may connect which source type to which target type. Each relationship with at least one rule gets SHACL shapes; one with none is left unconstrained. Click a cell to toggle it; with one relationship selected, click a row or column header to toggle the whole line."),
       h("div", { class: "matrix-tools" },
         field("Relationship", relSel), field("Rows (sources)", catSel("matrixRowCat")), field("Columns (targets)", catSel("matrixColCat")),
+        bases.length ? (() => {
+          const box = h("input", { type: "checkbox" });
+          box.checked = !!view.matrixBase;
+          box.addEventListener("change", () => { view.matrixBase = box.checked; saveView(); render(); });
+          return h("label", { class: "check small", title: "Rules from your types to theirs, or between theirs, as your shapes allow" }, box, `With ${bases.map((b) => b.title).join(", ")}'s types`);
+        })() : null,
         h("span", { class: "spacer" }),
         h("button", { class: "btn small", title: "Allow every source/target pair the domain and range guidance permits", onclick: () => seedFromGuidance(one) }, one ? `Seed ${one.label || one.id} from domain/range` : "Seed all from domain/range"),
         h("button", { class: "btn small", onclick: () => copyRulesFromParent(one), disabled: !(one && one.parent && project.rules[one.parent]) }, "Copy parent's rules"),
@@ -1484,7 +1666,7 @@
         input.addEventListener("change", () => {
           history.undo.push(JSON.stringify(project)); history.redo = [];
           core.setRule(project, r.id, s, t, input.checked);
-          persist(); issues = linter.lint(project);
+          persist(); issues = linter.lint(project, { bases });
           const cell = document.querySelector(`.cell[data-s="${CSS.escape(s)}"][data-t="${CSS.escape(t)}"]`);
           if (cell) {
             const ls = project.relationships.filter((x) => core.ruleSet(project, x.id).has(core.pairKey(s, t))).map(relLetter);
@@ -1588,7 +1770,7 @@
     const tax = project.taxonomy;
     const collapsed = collapsedSet("taxonomy");
     const showMembers = view.showMembers !== false;
-    const matched = core.categoryMatches(project);
+    const links = core.categoryLinks(project);
     const P = project.meta.prefix;
     const rows = [];
     const root = { key: "scheme", parentKey: null, depth: 0, id: "", group: "scheme", kind: "root", label: tax.label || `${project.meta.title} Concept Scheme`, tag: "scheme", expandable: tax.categories.length > 0, expanded: !collapsed.has("scheme") };
@@ -1601,12 +1783,16 @@
         const o = core.narrowerOrder(project, id);
         const members = showMembers ? o.members : [];
         const key = `${parentKey}/${id}`;
-        const m = matched.get(id);
+        const link = links.get(id) || {};
+        const s = link.stated;
+        const m = link.computed;
         const row = {
           key, parentKey, depth, id, parent, group: "category", kind: "category", label: c.label || core.humanize(id), title: `${P}tax:${id}`,
           tag: String(core.categoryMembers(project, id, true).length),
           badges: [
-            m ? h("span", { class: "pill tiny match " + (m.exact ? "exact" : "close"), title: m.exact ? `Its element types are the subtypes of ${labelOf(m.type)}` : `Its element types are nearly the subtypes of ${labelOf(m.type)}` }, `${m.exact ? "=" : "≈"} ${labelOf(m.type)}`) : null,
+            // The type it says it stands for first; failing that, the one its members suggest.
+            s ? h("span", { class: "pill tiny match " + (s.exact ? "exact" : "close"), title: s.exact ? `It stands for ${labelOf(s.type)}, and its element types are that type's subtypes` : `It stands for ${labelOf(s.type)}, but its element types differ from that type's subtypes` }, `stands for ${labelOf(s.type)}`)
+              : m ? h("span", { class: "pill tiny match " + (m.exact ? "exact" : "close"), title: m.exact ? `Its element types are the subtypes of ${labelOf(m.type)}` : `Its element types are nearly the subtypes of ${labelOf(m.type)}` }, `${m.exact ? "=" : "≈"} ${labelOf(m.type)}`) : null,
             o.explicit ? h("span", { class: "pill tiny", title: `Written as ${P}tax:${core.orderName(id)}` }, "ordered") : null,
           ],
           expandable: o.categories.length + members.length > 0, expanded: !collapsed.has(key),
@@ -1629,6 +1815,8 @@
       }
     };
     if (root.expanded) walk("", "scheme", 1, new Set());
+    // The taxonomies of the languages the project extends, read only, with the project's types where their base types are (SReq 12.4).
+    if (showingBases()) for (const b of bases) baseSchemeRows(b, rows);
     if (ui.taxMember) markSelection("taxonomy", rows, ui.taxMember, (r) => r.group === "type");
     else markSelection("taxonomy", rows, ui.sel.taxonomy, (r) => r.group === "category");
     return {
@@ -1636,6 +1824,8 @@
       onSelect: (r, mods) => chooseRow("taxonomy", r, mods, (x) => {
         if (x.group === "type") { ui.taxMember = x.id; ui.selKey.taxonomy = x.key; ui.sel.taxonomy = x.cat; render(); }
         else if (x.group === "category") { ui.taxMember = ""; ui.selKey.taxonomy = x.key; ui.sel.taxonomy = x.id; render(); }
+        else if (x.group === "inherited" || x.group === "basemember") go("elements", x.id);
+        else if ((x.group === "basecat" || x.group === "basescheme") && x.expandable) { setOpen("taxonomy", x.key, !x.expanded); render(); }
       }),
       onToggle: (r, open) => { setOpen("taxonomy", r.key, open); render(); },
       menu: taxonomyMenu,
@@ -1715,6 +1905,8 @@
   function taxonomyMenu(row) {
     const at = () => rowAnchor("taxonomy", row.key);
     if (row.group === "scheme") return [{ label: "New top-level category", run: () => addCategory("") }];
+    if (row.group === "inherited" || row.group === "basemember") return [{ label: "Open its page", run: () => go("elements", row.id) }];
+    if (row.group === "basecat" || row.group === "basescheme") return [];
     if (row.group === "category") {
       const siblings = core.subcategories(project, row.parent);
       const i = siblings.indexOf(row.id);
@@ -1759,7 +1951,7 @@
 
   /** Alt+Up and Alt+Down reorder; on a category, Alt+Right puts it into the one above, Alt+Left takes it out of its parent. */
   function taxonomyKeyMove(row, dir) {
-    if (row.group === "scheme") return;
+    if (row.group !== "category" && row.group !== "type") return;
     if (dir === "up" || dir === "down") { shiftRow(row, dir === "up" ? -1 : 1); return; }
     if (row.group === "type") { toast("A type moves to another category from its menu: Move to…"); return; }
     if (dir === "right") {
@@ -1810,13 +2002,92 @@
         field("Parent", select([{ value: "", label: "— top level —" }].concat(catOptions().filter((x) => !inside.has(x.value))), () => c.parent, (v) => { core.moveCategory(project, c.id, v); })),
         field("Definition", textArea(() => c.definition, (v) => { c.definition = v; }, 2), null, "span2"),
         field("Members (skos:narrower)", chips(() => members, setMembers, elementOptions(true).filter((x) => !core.isCurie(x.value)).concat(relationshipOptions()), { mutate: change }), null, "span2")),
-      h("h3", { style: { marginTop: "14px" } }, "Abstract type"),
-      m ? matchView(m, "category") : h("p", { class: "small muted" }, "No abstract type has these element types, or nearly these, as its subtypes."),
+      standsForSection(c, m),
       h("h3", { style: { marginTop: "14px" } }, "Order"),
       o.explicit
         ? h("p", { class: "small" }, `It has an order of its own, written as ${project.meta.prefix}tax:${core.orderName(c.id)}: la-gram's palette follows it. `,
           h("button", { class: "btn small", onclick: () => mutate(() => core.clearOrder(project, c.id)) }, "Clear the order"))
         : h("p", { class: "small muted" }, "No order of its own: la-gram lists its groups and types by name. Drag a row in the tree, or press Alt+Up or Alt+Down on it, to give it one."));
+  }
+
+  /**
+   * The element type a category stands for (SReq 4.6): the one it states, its rdfs:seeAlso, compared with its
+   * members; and the one its members suggest, when that is another, with a way to state it (SReq 11.6).
+   */
+  function standsForSection(c, found) {
+    const link = core.categoryLinks(project).get(c.id) || {};
+    const stated = link.stated ? Object.assign({ category: c.id }, link.stated) : null;
+    const options = [{ value: "", label: "— none —" }].concat(elementOptions(true).filter((o) => o.value !== core.ELEMENT_ROOT));
+    if (c.standsFor && !options.some((o) => o.value === c.standsFor)) options.push({ value: c.standsFor, label: c.standsFor });
+    return h("div", {},
+      h("h3", { style: { marginTop: "14px" } }, "The type it stands for"),
+      field("Stands for (rdfs:seeAlso)", select(options, () => c.standsFor, (v) => { c.standsFor = v; }),
+        "The element type this category is the taxonomy's name for, as the published taxonomies link a concept to its class."),
+      stated ? matchView(stated, "category", true) : null,
+      found && (!stated || found.type !== stated.type) ? h("div", {},
+        matchView(found, "category"),
+        h("button", { class: "btn small", type: "button", onclick: () => mutate(() => { c.standsFor = found.type; }) }, `Say it stands for ${labelOf(found.type)}`)) : null,
+      !stated && !found ? h("p", { class: "small muted" }, "No abstract type has these element types, or nearly these, as its subtypes.") : null);
+  }
+
+  /**
+   * A language the project extends, its taxonomy read only (SReq 12.4): its categories with their types, and the
+   * project's types in the categories of the base types they specialize, each where it is deepest.
+   */
+  function baseSchemeRows(b, rows) {
+    const bp = b.project;
+    const top = `base ${b.namespace}`;
+    const ownIn = new Map();
+    for (const e of project.elements) {
+      for (const a of core.ancestors(ctx, e.id)) {
+        const x = core.baseConcept(ctx, a);
+        if (!x || x.base !== b.namespace) continue;
+        const local = a.slice(a.indexOf(":") + 1);
+        const item = bp.elements.find((y) => y.id === local);
+        const cats = ((item && item.categories) || []).concat(bp.taxonomy.categories.filter((c) => c.standsFor === local).map((c) => c.id));
+        for (const c of cats) {
+          if (!ownIn.has(c)) ownIn.set(c, []);
+          if (!ownIn.get(c).some((t) => t.id === e.id)) ownIn.get(c).push({ id: e.id, via: a });
+        }
+      }
+    }
+    const below = (c) => [...core.categoryDescendants(bp, c)].filter((d) => d !== c);
+    const mine = (c) => (ownIn.get(c) || []).filter((t) => !below(c).some((d) => (ownIn.get(d) || []).some((u) => u.id === t.id)));
+    const anyMine = (c) => [c].concat(below(c)).some((d) => (ownIn.get(d) || []).length);
+    const root = {
+      key: top, parentKey: null, depth: 0, id: "", group: "basescheme", kind: "root base", noMenu: true, label: bp.taxonomy.label || `${b.title} Concept Scheme`,
+      tag: `${b.title}, read only`, expandable: bp.taxonomy.categories.length > 0, expanded: isOpen("taxonomy", top, false),
+    };
+    rows.push(root);
+    if (!root.expanded) return;
+    const walk = (parent, parentKey, depth, trail) => {
+      for (const id of core.subcategories(bp, parent)) {
+        if (trail.has(id)) continue;
+        const c = bp.taxonomy.categories.find((x) => x.id === id);
+        const key = `${parentKey}/${id}`;
+        const members = core.categoryMembers(bp, id, false);
+        const yours = mine(id);
+        const row = {
+          key, parentKey, depth, id: "", group: "basecat", kind: "basecat base", noMenu: true, label: c.label || core.humanize(id), title: `${b.prefix}tax:${id}, ${b.title}: read only`,
+          tag: yours.length ? `${yours.length} yours` : null,
+          badges: c.standsFor ? h("span", { class: "pill tiny" }, `stands for ${labelOf(`${b.prefix}:${c.standsFor}`)}`) : null,
+          expandable: core.subcategories(bp, id).length + members.length + yours.length > 0, expanded: isOpen("taxonomy", key, anyMine(id)),
+        };
+        rows.push(row);
+        if (!row.expandable || !row.expanded) continue;
+        walk(id, key, depth + 1, new Set(trail).add(id));
+        for (const t of yours) {
+          const e = project.elements.find((x) => x.id === t.id);
+          rows.push({ key: `${key}/own:${t.id}`, parentKey: key, depth: depth + 1, id: t.id, group: "inherited", kind: "member inherited", label: labelOf(t.id), swatch: e.abstract ? undefined : (e.notation && e.notation.fill) || "transparent", italic: e.abstract, tag: `via ${labelOf(t.via)}`, title: `${project.meta.prefix}:${t.id}: in it as a kind of ${labelOf(t.via)}` });
+        }
+        for (const local of members) {
+          const ref = `${b.prefix}:${local}`;
+          const x = core.baseConcept(ctx, ref) || {};
+          rows.push({ key: `${key}/m:${ref}`, parentKey: key, depth: depth + 1, id: ref, group: "basemember", kind: "member base", label: labelOf(ref), swatch: x.kind === "element" && !x.abstract ? x.fill || "transparent" : undefined, icon: x.kind === "relationship" ? "↗" : null, title: `${ref}, ${b.title}` });
+        }
+      }
+    };
+    walk("", top, 1, new Set());
   }
 
   function memberDetail(ref) {
@@ -2238,6 +2509,8 @@
     const restEl = project.elements.filter((e) => !e.abstract && !used.has(e.id)).map((e) => e.id);
     const restRel = project.relationships.filter((r) => !used.has(r.id)).map((r) => r.id);
     const ext = project.externalConcepts.filter((x) => !x.abstract).map((x) => x.ref);
+    // A viewpoint may admit the types of a language the project extends (SReq 12.2).
+    if (showingBases()) for (const b of bases) groups.push([b.title, ctx.externalConcepts.filter((x) => x.base === b.namespace && !x.abstract).map((x) => x.ref)]);
     if (restEl.length) groups.push([leafCats.length ? "Other elements" : "Elements", restEl]);
     if (restRel.length) groups.push([leafCats.length ? "Other relationships" : "Relationships", restRel]);
     if (ext.length) groups.push(["External", ext]);
@@ -2524,9 +2797,16 @@
       if (e.key === "Escape") closePopover();
     });
 
-    // Import dialog
+    // Import dialog: a project's documents, or those of a language it extends (SReq 12.6).
     const dlg = $("dlgImport");
-    $("btnImport").addEventListener("click", () => { $("importReport").hidden = true; dlg.showModal(); });
+    const defaultTitle = $("importTitle").textContent;
+    $("btnImport").addEventListener("click", () => openImport(null));
+    dlg.addEventListener("close", () => {
+      importFor = null;
+      $("importTitle").textContent = defaultTitle;
+      $("importText").hidden = false;
+      $("importBaseText").hidden = true;
+    });
     $("importGo").addEventListener("click", async (e) => {
       e.preventDefault();
       const docs = [];
@@ -2540,6 +2820,17 @@
           docs.push({ name: url, text: await res.text(), baseIRI: url });
         }
         if (!docs.length) { report.textContent = "Choose at least one file or URL."; return; }
+        if (importFor) {
+          const imp = importFor;
+          const { project: b } = importer.importTurtle(docs, { namespace: imp.namespace, prefix: imp.prefix });
+          if (!b.elements.length && !b.relationships.length) { report.textContent = `These documents define no types in ${imp.namespace}.`; return; }
+          loadedBases[imp.namespace] = { project: compactBase(b), loaded: new Date().toISOString().slice(0, 10) };
+          const kept = saveBases();
+          dlg.close();
+          changed(true);
+          toast(kept ? `${b.meta.title} is shown as the language ${imp.prefix}: names.` : `${b.meta.title} is shown until the page is reloaded: this browser could not keep it.`);
+          return;
+        }
         const { project: p, report: lines } = importer.importTurtle(docs);
         dlg.close();
         setProject(p, "Imported.");
@@ -2550,12 +2841,27 @@
     });
   }
 
+  /** The import of a language a project extends, while the dialog is open for it (SReq 12.6). */
+  let importFor = null;
+  function openImport(imp) {
+    importFor = imp || null;
+    $("importReport").hidden = true;
+    if (imp) {
+      $("importTitle").textContent = `Load the documents of ${imp.prefix}:`;
+      $("importBaseText").textContent = `The studio shows the types of ${imp.namespace} beside yours, read only. The documents stay in this browser, not in the project: give at least its ontology, and its taxonomy for its categories.`;
+      $("importBaseText").hidden = false;
+      $("importText").hidden = true;
+    }
+    $("dlgImport").showModal();
+  }
+
   // ------------------------------------------------------------------ boot
 
   try { const t = localStorage.getItem(THEME_KEY); if (t) document.documentElement.dataset.theme = t; } catch (e) { /* ignore */ }
   buildNewMenu();
   wire();
-  issues = linter.lint(project);
+  refreshBases();
+  issues = linter.lint(project, { bases });
   render();
   window.__studio = { get project() { return project; }, go, render };
 })();

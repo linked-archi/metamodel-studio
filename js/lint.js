@@ -11,11 +11,36 @@
 })(typeof self !== "undefined" ? self : this, function (core) {
   "use strict";
 
-  function lint(project) {
+  /**
+   * `opts.bases`: the languages the project extends, as core.basesFor gives them. A reference into one of them must
+   * name a type it defines (SReq 12.5).
+   */
+  /** "a relationship", "an element", "an attribute". */
+  const aKind = (kind) => `${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind}`;
+
+  function lint(project, opts) {
     const out = [];
     const add = (level, tab, id, message) => out.push({ level, tab, id, message });
     const m = project.meta;
     const ns = core.namespaces(project);
+    const baseTypes = new Map();
+    for (const b of (opts && opts.bases) || []) {
+      const kinds = new Map();
+      for (const e of b.project.elements || []) kinds.set(e.id, "element");
+      for (const r of b.project.relationships || []) kinds.set(r.id, "relationship");
+      for (const a of b.project.attributes || []) kinds.set(a.id, "attribute");
+      baseTypes.set(b.prefix, { title: b.title, kinds });
+    }
+    /** For a reference into a language the project extends: whether that language defines it, and as what. */
+    const checkBase = (tab, id, ref, what, kinds) => {
+      if (!core.isCurie(ref)) return false;
+      const base = baseTypes.get(ref.slice(0, ref.indexOf(":")));
+      if (!base) return false;
+      const kind = base.kinds.get(ref.slice(ref.indexOf(":") + 1));
+      if (!kind) add("warning", tab, id, `${what} "${ref}" is not a type of ${base.title}.`);
+      else if (kinds && !kinds.includes(kind)) add("warning", tab, id, `${what} "${ref}" is ${aKind(kind)} of ${base.title}.`);
+      return true;
+    };
 
     // ---- metadata
     if (!core.PREFIX_NAME.test(m.prefix || "")) add("error", "overview", "", `Prefix "${m.prefix}" is not a valid Turtle prefix (letters, digits, - and _; starts with a letter).`);
@@ -49,9 +74,10 @@
     const checkRef = (tab, id, ref, what, kinds) => {
       if (/^https?:\/\//.test(ref)) return;
       if (!knownPrefix(ref)) { add("error", tab, id, `${what} "${ref}" uses an undeclared prefix. Add it under Imports.`); return; }
+      if (!idx.has(ref) && checkBase(tab, id, ref, what, kinds)) return;
       const hit = idx.get(ref);
       if (!hit && !core.isCurie(ref)) add("error", tab, id, `${what} "${ref}" is not defined.`);
-      else if (hit && kinds && !kinds.includes(hit.kind)) add("warning", tab, id, `${what} "${ref}" is a ${hit.kind}.`);
+      else if (hit && kinds && !kinds.includes(hit.kind)) add("warning", tab, id, `${what} "${ref}" is ${aKind(hit.kind)}.`);
     };
 
     // ---- elements
@@ -94,6 +120,7 @@
       if (!r.notation) add("info", "relationships", r.id, `${r.id} has no notation letter (skos:notation), which relationship tables use.`);
       if (!r.definition) add("warning", "relationships", r.id, `${r.id} has no definition.`);
       if (r.parent && !relById.has(r.parent) && !core.isCurie(r.parent)) add("error", "relationships", r.id, `${r.id}: parent relationship "${r.parent}" does not exist.`);
+      if (r.parent && core.isCurie(r.parent)) checkBase("relationships", r.id, r.parent, `Parent of ${r.id}`, ["relationship"]);
       for (const d of r.domain) checkRef("relationships", r.id, d, `Domain of ${r.id}`, ["element"]);
       for (const d of r.range) checkRef("relationships", r.id, d, `Range of ${r.id}`, ["element"]);
       for (const c of r.categories) if (!project.taxonomy.categories.some((x) => x.id === c)) add("error", "relationships", r.id, `${r.id}: taxonomy category "${c}" does not exist.`);
@@ -129,7 +156,10 @@
       for (const key of pairs) {
         ruleCount++;
         const [s, t] = core.splitPair(key);
-        for (const x of [s, t]) if (!idx.has(x) && !core.isCurie(x)) add("error", "rules", relId, `${relId}: rule ${s} → ${t} names "${x}", which is not defined.`);
+        for (const x of [s, t]) {
+          if (!idx.has(x) && !core.isCurie(x)) add("error", "rules", relId, `${relId}: rule ${s} → ${t} names "${x}", which is not defined.`);
+          else if (!idx.has(x)) checkBase("rules", relId, x, `${relId}: rule ${s} → ${t} names`, ["element"]);
+        }
         if (!concrete.has(s) || !concrete.has(t)) add("info", "rules", relId, `${relId}: rule ${s} → ${t} uses an abstract or external type; it is kept but not shown in the matrix.`);
       }
     }
@@ -142,6 +172,21 @@
       checkId("taxonomy", c, "Category");
       if (c.parent && !project.taxonomy.categories.some((x) => x.id === c.parent)) add("error", "taxonomy", c.id, `Category ${c.id}: parent "${c.parent}" does not exist.`);
       if (hasCycle(project.taxonomy.categories, c.id)) add("error", "taxonomy", c.id, `Category ${c.id} is its own ancestor.`);
+      // The type it stands for (SReq 4.6): an element type, and, when it is the project's, one its members agree with.
+      if (!c.standsFor) continue;
+      checkRef("taxonomy", c.id, c.standsFor, `The type category ${c.id} stands for,`, ["element"]);
+      const target = project.elements.find((e) => e.id === c.standsFor);
+      if (!target) continue;
+      const empty = !core.subcategories(project, c.id).length && !core.categoryMembers(project, c.id, false).length;
+      const link = core.compareWithType(project, c.id, c.standsFor);
+      if (empty && !target.abstract) add("info", "taxonomy", c.id, `Category ${c.id} has nothing under it and stands for ${c.standsFor}, a concrete type: la-gram reads the category as ${c.standsFor}.`);
+      else if (!empty && (link.extra.length || link.missing.length)) {
+        const names = (ids) => (ids.length > 1 ? `${ids.slice(0, -1).join(", ")} and ${ids[ids.length - 1]}` : ids[0]);
+        const parts = [`Category ${c.id} stands for ${c.standsFor}.`];
+        if (link.extra.length) parts.push(`${names(link.extra)} ${link.extra.length === 1 ? "is in it, yet no subtype" : "are in it, yet no subtypes"} of it.`);
+        if (link.missing.length) parts.push(`${names(link.missing)} ${link.missing.length === 1 ? "is a subtype" : "are subtypes"} of it, yet not in it.`);
+        add("info", "taxonomy", c.id, parts.join(" "));
+      }
     }
     // ---- proposal orders (SReq 4.2–4.3)
     const general = project.proposalOrders.filter((o) => !o.domain.length && !o.range.length);
@@ -206,6 +251,7 @@
     for (const x of project.externalConcepts) {
       if (!core.isCurie(x.ref || "")) add("error", "overview", x.ref, `External concept "${x.ref}" must be a CURIE (prefix:Name).`);
       else if (!knownPrefix(x.ref)) add("error", "overview", x.ref, `External concept "${x.ref}" uses an undeclared prefix.`);
+      else checkBase("overview", x.ref, x.ref, "External concept", [x.kind || "element"]);
     }
 
     const order = { error: 0, warning: 1, info: 2 };

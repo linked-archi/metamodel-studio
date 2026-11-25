@@ -14,7 +14,14 @@ const path = require("path");
 const core = require("../js/core.js");
 const generator = require("../js/generator.js");
 const importer = require("../js/importer.js");
-const { lint } = require("../js/lint.js");
+const { lint: lintProject } = require("../js/lint.js");
+const templates = require("../templates/templates.js");
+
+/** The checks, with the languages the project extends that the studio bundles (SReq 12.5). */
+function lint(project) {
+  const bundled = Object.values(templates).map((t) => ({ namespace: core.conceptNamespace(t.project), project: t.project, bundled: true }));
+  return lintProject(project, { bases: core.basesFor(project, bundled) });
+}
 
 function usage(code) {
   process.stderr.write(fs.readFileSync(__filename, "utf8").split("\n").slice(2, 9).map((l) => l.replace(/^ \* ?/, "")).join("\n") + "\n");

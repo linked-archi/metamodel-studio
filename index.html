@@ -40,8 +40,9 @@
 
   <dialog id="dlgImport" class="dialog">
     <form method="dialog" class="dialog-body" id="importForm">
-      <h2>Import Turtle documents</h2>
-      <p class="muted">Load an existing metamodel — for example the published ArchiMate 4.0 documents — as the starting point.
+      <h2 id="importTitle">Import Turtle documents</h2>
+      <p class="muted" id="importBaseText" hidden></p>
+      <p class="muted" id="importText">Load an existing metamodel — for example the published ArchiMate 4.0 documents — as the starting point.
         Give any of: ontology (<code>…/onto</code>), SHACL shapes, taxonomy, viewpoints and the <code>arch:Metamodel</code> manifest.
         Element and relationship classes are found through <code>rdfs:subClassOf arch:Element</code> /
         <code>arch:QualifiedRelationship</code>; rules are read from relationship shapes.</p>

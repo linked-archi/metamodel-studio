@@ -104,8 +104,8 @@ la-gram does and compare what the kernel reads with the project.
     compared.
   - **Offers come from exact matches only,** as they were before the change, so a near match never prompts a
     change. Classifying in a sub-category, or specializing a subtype, covers the broader offer.
-  - **What it leaves aside.** The published ArchiMate 4.0 taxonomy states the link with `rdfs:seeAlso` from each
-    category to its abstract type. Import does not read it (*Open questions*).
+  - **Beside the stated link.** Where a category names its type (SD-17), the page compares the members with that
+    type, and the worked-out match only says when the members point at another.
 - **SD-14 A category's order is written only when it has one of its own; the names are ArchiMate 4.0's.**
   - **The array** is `<Category>Order`, `iso-thes:superOrdinate` the category, its `skos:memberList` every narrower
     concept once, sub-categories first (SReq 4.4). The kernel reads it to order la-gram's palette.
@@ -118,8 +118,9 @@ la-gram does and compare what the kernel reads with the project.
     namespaces: renaming and deleting reach each through its scope.
   - **The top level** has no category to hold an order. It keeps the project's order, and the palette grouping says
     which dimension la-gram's palette is grouped by.
-- **SD-15 Project format `/3`.** A category has `categoryOrder`, `memberOrder` and `orderLabel`; the taxonomy has
-  `paletteGrouping` and `diagramGroupOrder`. `core.normalize` migrates `/1` and `/2`.
+- **SD-15 Project format `/3`.** A category has `standsFor`, `categoryOrder`, `memberOrder` and `orderLabel`; the
+  taxonomy has `paletteGrouping` and `diagramGroupOrder`. `core.normalize` migrates `/1` and `/2`. `standsFor` joined
+  `/3` before `/3` was published, so the format did not change again.
 - **SD-16 The page's trees are plain DOM, in `tree.js`, with la-gram's gestures.**
   - **Gestures.** A drag starts after the pointer moves a few pixels with the button down. The row under it says what
     a drop would do, or why not; a folded row it rests on unfolds; Escape stops it. Ctrl or Cmd and Shift choose
@@ -134,13 +135,40 @@ la-gram does and compare what the kernel reads with the project.
   - **The page's checks** (`tests/ui/`) drive Chrome or Playwright's Chromium through Playwright, a development
     dependency. They run locally, as the kernel checks do: the CI image has no browser.
 
+- **SD-17 A category keeps the type it stands for.** `standsFor` is one element type, the project's or a base's, read
+  from and written as `rdfs:seeAlso` from the category (SReq 4.6). Decision confirmed on 2026-11-25.
+  - **Why.** The published ArchiMate 4.0 taxonomy states it ("linked via rdfs:seeAlso on each SKOS concept pointing
+    to its corresponding OWL class"), and import dropped it. Keeping it makes the link explicit where a language
+    publishes one, and round-trips the published set.
+  - **Only an element type.** ArchiMate 4.0 also links two relationship categories to its strength collections with
+    `rdfs:seeAlso`; those, and links to documents, stay out.
+  - **What the kernel does with it.** It reads a concept with nothing under it that stands for a class as that
+    class, and leaves abstract classes out of the palette. So an empty category that stands for a concrete type
+    appears in la-gram as that type, and the checks say so.
+  - **Renaming and deleting reach it:** it is a reference in the concept namespace (`SCOPES`).
+- **SD-18 A base is shown, never stored or changed.** A project names the languages it extends by its imports, as
+  before; the studio shows each one it has (SReq 12). Decision confirmed on 2026-11-25.
+  - **Where a base comes from.** ArchiMate 4.0 is the studio's own template, built from the published documents.
+    Any other is loaded from its documents and kept in that browser: its types, attributes and taxonomy, not its rules
+    or viewpoints. The kernel bundles ArchiMate 3.2 and 4.0 and no other language a project extends today.
+  - **How it is shown.** `core.withBases` adds a base's types to a copy of the project as outside concepts, named
+    `prefix:id`, with their parents, definitions and categories. The page's trees, pages, pickers and relations read
+    that copy; the generator and the project file never see it, and the checks only compare references with it.
+  - **Read only.** A base type takes drops and makes subtypes; it is never dragged, renamed or deleted, and the
+    project's types are not classified in a base's categories: they are shown in them through the base types they
+    specialize.
+  - **Why not stored.** Which base and which version a project is pinned to is A3's (`plan.md`). Until then, the
+    imports say enough to find a base, and nothing new is written into the project.
+
 ## Open questions
 
 | Question | Where it is decided |
 |---|---|
-| The engine as a shared TypeScript package | A2, once platform decision PD-16 (proposed 2026-11-22) is accepted. Where it lives and is published: SD-11 |
+| The engine as a shared TypeScript package | A2: platform decision PD-16 was accepted on 2026-11-24. Where it lives and is published: SD-11 |
 | Installing from GitLab's package registry with npm 12, which by default refuses the tarballs its instance and group endpoints give (`EALLOWREMOTE`, gitlab-org/gitlab#605970). The project endpoint should avoid it; not yet tried | A2, when the engine is first published; the kernel meets it too |
 | Previewing an imported own shape from its path templates (now: its fallback) | A2 |
 | What import drops from published sets: icons, alternative styles, rendering modes, presentation contexts, element and principle shapes, relationship tables | A2–A4, as the workspace needs them |
-| The published ArchiMate 4.0 taxonomy links each category to its abstract type with `rdfs:seeAlso`. Read and write it, beside the computed match (SD-13)? | To decide: `../../tasks/hierarchy-editing/` |
+| Pinning a base and its version in the project, and loading it from its IRI (SD-18) | A3 |
+| Classifying the project's types in a base's categories, so that la-gram's palette puts them in the base's sections | A3, with the pinned base |
+| Carrying more bases: ArchiMate 3.2's documents are in the kernel's assets; BPMN, C4, Backstage and LeanIX are not | As extensions of them are made; until then their documents are loaded in the browser |
 | A cylinder among core-vis's shapes | linked-archi-meta; nothing here waits for it |

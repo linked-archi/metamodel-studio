@@ -35,4 +35,4 @@ checks' first run, on the code as it was, is in `baseline.md`. All 29 kernel che
 **2026-11-21, la-gram's page:** the Cloud Platform set loads, and every shape, line, line end and colour draws as
 designed (`../../specs/studio/tasks.md`, A1).
 
-**Next:** accepting platform decision PD-16 (proposed 2026-11-22, `../metamodel-authoring-decision/`), then A2.
+**Next:** A2. Platform decision PD-16 was accepted on 2026-11-24 (`../metamodel-authoring-decision/`).

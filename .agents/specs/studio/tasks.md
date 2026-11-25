@@ -77,10 +77,32 @@ maintainer.
 - [x] The Cloud Platform template orders Compute's types, groups its palette by Elements and keeps diagram bands
 - [x] `npm test` (31), the Python tests (12), `npm run test:kernel` (31) and `npm run test:ui` (11) pass; every page
   renders both templates with no page error, light and dark, and at phone width
-- [ ] Playwright as a development dependency, to edit by hand: `npm install --save-dev --save-exact playwright@1.63.0`,
-  the version la-gram uses. Until then `npm run test:ui` skips its checks
-- [ ] To decide: reading and writing the `rdfs:seeAlso` from a category to its abstract type (design.md, *Open
-  questions*)
+- [x] Playwright as a development dependency, `playwright@1.63.0`, the version la-gram uses (2026-11-25)
+- [x] Reading and writing the `rdfs:seeAlso` from a category to its abstract type: decided on 2026-11-25, done in
+  *The category link and the base* below
+
+## The category link and the base (SReq 4.6, 11.8, 12, SD-17, SD-18)
+
+**2026-11-25: done, uncommitted, for review.** Working notes: `../../tasks/base-metamodel/`.
+
+- [x] A category's `standsFor`: read from `rdfs:seeAlso` to an element type, written back, renamed and deleted with
+  its type (SReq 4.6, SD-17) — *studio.test.js, test_metamodel_studio.py*
+- [x] Its page compares the stated type with the members, and offers to name the type the members suggest; the
+  tree's badge shows the stated type first (SReq 11.8) — *studio.test.js, tests/ui*
+- [x] Checks: a link to what is no element type, an empty category standing for a concrete type, and members that
+  differ from the stated type's subtypes (SReq 4.6) — *studio.test.js*
+- [x] The bases of a project, from its imports and the studio's templates or documents loaded in the browser
+  (SReq 12.1, SD-18) — *studio.test.js*
+- [x] The trees show a base's types, read only, with the project's types under them; a drop on a base type
+  specializes it (SReq 12.2) — *tests/ui*
+- [x] A base type's page, read only, with a way to make a subtype of it (SReq 12.3) — *tests/ui*
+- [x] The categories a type has in a base, in its relations and in the base's taxonomy on the taxonomy page
+  (SReq 12.4) — *studio.test.js, tests/ui*
+- [x] Checks on references into a base, in the page and on the command line (SReq 12.5) — *studio.test.js*
+- [x] Loading a base's documents from the Overview, kept in the browser (SReq 12.6) — *tests/ui*, with the kernel's
+  ArchiMate 3.2 documents
+- [x] `npm test` (36), the Python tests (13), `npm run test:kernel` (31) and `npm run test:ui` (16) pass; the
+  ArchiMate 4.0 palette la-gram reads is unchanged with the links written
 
 ## A2–A4
 
@@ -90,8 +112,11 @@ See `plan.md`. Not started.
 
 - **Import keeps what the project model holds.** From a published set it drops icons (`arch:prefVisNotation`,
   `arch-vis:iconSymbol`), alternative styles, rendering modes and default sizes, presentation contexts, element and
-  principle shapes, relationship tables, the source attribution on classes, and the `rdfs:seeAlso` from a category
-  to its abstract type.
+  principle shapes, relationship tables, the source attribution on classes, and ArchiMate 4.0's strength
+  collections, which two relationship categories link to with `rdfs:seeAlso`.
+- **A base is shown, not pinned.** The project names it by an import; the studio carries ArchiMate 4.0, and any other
+  base's documents are loaded per browser. The project's types are shown in a base's categories, not classified in
+  them (SD-18).
 - **Drag and drop needs a mouse or a pen.** On a touch screen a list scrolls instead, and a row's menu moves it.
 - **Subtypes have no order of their own:** element and relationship subtypes are listed by name, catalog categories
   in the order they were made.
@@ -106,6 +131,13 @@ See `plan.md`. Not started.
 
 ## Change log
 
+- **2026-11-25. The category link and the base (SReq 4.6, 11.8, 12, SD-17, SD-18).**
+  - **A category keeps the type it stands for,** `standsFor`, read from and written as `rdfs:seeAlso`, as the
+    published ArchiMate 4.0 taxonomy links its 14 categories to their classes. Its page compares that type with the
+    members. *studio.test.js, test_metamodel_studio.py, tests/ui*
+  - **A metamodel that extends another shows it:** its types in the trees, read only, with the project's under them;
+    a page for each; the categories the project's types have through them; checks on references into it; and its
+    documents loaded from the Overview when the studio does not carry it. *studio.test.js, tests/ui*
 - **2026-11-25. Editing hierarchies and classification (SReq 11, SD-12 to SD-16).**
   - **Trees** for element types, relationship types, taxonomy categories and the viewpoint catalog: an item under
     each of its parents, a type of another language as an anchor. The element tree had listed a type under its first

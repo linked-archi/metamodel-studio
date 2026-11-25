@@ -16,8 +16,9 @@
   "use strict";
 
   /**
-   * Format /3 (SD-15): the order of a category's narrower concepts, the palette grouping and the diagram group
-   * order. /2 (SD-10) added proposal orders, both line ends and own shapes. normalize() migrates /1 and /2.
+   * Format /3 (SD-15): the order of a category's narrower concepts, the type a category stands for, the palette
+   * grouping and the diagram group order. /2 (SD-10) added proposal orders, both line ends and own shapes.
+   * normalize() migrates /1 and /2.
    */
   const FORMAT = "linked-archi-metamodel-studio/3";
 
@@ -201,9 +202,10 @@
     p.taxonomy = Object.assign({}, tax, p.taxonomy || {});
     if (!Array.isArray(p.taxonomy.categories)) p.taxonomy.categories = [];
     // A category's own order of its narrower concepts (SReq 4.4): its sub-categories and its members, each list
-    // naming ids of one namespace, so that renaming and deleting reach them (SCOPES).
+    // naming ids of one namespace, so that renaming and deleting reach them (SCOPES). `standsFor` is the element
+    // type the category stands for, its rdfs:seeAlso (SReq 4.6, SD-17).
     p.taxonomy.categories = p.taxonomy.categories.map((c) => Object.assign({
-      id: "", label: "", definition: "", parent: "", categoryOrder: [], memberOrder: [], orderLabel: "",
+      id: "", label: "", definition: "", parent: "", standsFor: "", categoryOrder: [], memberOrder: [], orderLabel: "",
     }, c));
     for (const key of ["paletteGrouping", "diagramGroupOrder"]) {
       p.taxonomy[key] = Object.assign({}, tax[key], p.taxonomy[key] || {});
@@ -389,7 +391,7 @@
       lists: ["elements", "relationships", "attributes"],
       fields: [["elements", "parents"], ["relationships", "domain"], ["relationships", "range"], ["viewpoints", "concepts"], ["externalConcepts", "parents"], ["attributes", "domain"],
         ["proposalOrders", "members"], ["proposalOrders", "domain"], ["proposalOrders", "range"], ["taxonomy.categories", "memberOrder"]],
-      scalars: [["relationships", "parent"]],
+      scalars: [["relationships", "parent"], ["taxonomy.categories", "standsFor"]],
     },
     taxonomy: {
       lists: ["taxonomy.categories", "proposalOrders"],
@@ -575,9 +577,13 @@
     return x ? (x.parents || []).slice() : [];
   }
 
-  /** The project's element types directly under `ref`: a local or outside type, or arch:Element for those with no parent. */
+  /**
+   * The element types directly under `ref` (a local or outside type, or arch:Element for those with no parent): the
+   * project's, then the outside types declared under it, such as a base's (withBases).
+   */
   function subtypes(project, ref) {
-    return project.elements.filter((e) => (e.parents.length ? e.parents : [ELEMENT_ROOT]).includes(ref)).map((e) => e.id);
+    return project.elements.filter((e) => (e.parents.length ? e.parents : [ELEMENT_ROOT]).includes(ref)).map((e) => e.id)
+      .concat(project.externalConcepts.filter((x) => (x.kind || "element") === "element" && (x.parents || []).includes(ref)).map((x) => x.ref));
   }
 
   /** Every path from a root down to element type `id`. A path starts at arch:Element, or at an outside type whose parents the project does not declare. */
@@ -633,9 +639,21 @@
     return true;
   }
 
-  /** The project's relationship types directly under `ref`: a relationship type, or arch:QualifiedRelationship for those with no parent. */
+  /**
+   * The relationship types directly under `ref` (a relationship type, or arch:QualifiedRelationship for those with
+   * no parent): the project's, then outside ones declared under it, such as a base's (withBases).
+   */
   function relationshipSubtypes(project, ref) {
-    return project.relationships.filter((r) => (r.parent || RELATIONSHIP_ROOT) === ref).map((r) => r.id);
+    return project.relationships.filter((r) => (r.parent || RELATIONSHIP_ROOT) === ref).map((r) => r.id)
+      .concat(project.externalConcepts.filter((x) => x.kind === "relationship" && (x.parents || []).includes(ref)).map((x) => x.ref));
+  }
+
+  /** What relationship type `id` is a kind of: arch:QualifiedRelationship at the top, null when it is not known. */
+  function relationshipParent(project, id) {
+    const r = relationshipOf(project, id);
+    if (r) return r.parent || RELATIONSHIP_ROOT;
+    const x = project.externalConcepts.find((c) => c.ref === id && c.kind === "relationship");
+    return x && x.parents && x.parents[0] ? x.parents[0] : null;
   }
 
   function relationshipDescendants(project, id) {
@@ -647,18 +665,18 @@
     return seen;
   }
 
-  /** From the root down to relationship type `id`: arch:QualifiedRelationship first, or an outside parent. */
+  /** From the root down to relationship type `id`: arch:QualifiedRelationship first, or an outside parent not known further. */
   function relationshipPath(project, id) {
     const out = [id];
     const seen = new Set([id]);
-    let cur = relationshipOf(project, id);
-    while (cur && cur.parent) {
-      if (seen.has(cur.parent)) return out; // a cycle, which the checks report
-      out.unshift(cur.parent);
-      seen.add(cur.parent);
-      cur = relationshipOf(project, cur.parent);
+    let p = relationshipParent(project, id);
+    while (p && p !== RELATIONSHIP_ROOT) {
+      if (seen.has(p)) return out; // a cycle, which the checks report
+      out.unshift(p);
+      seen.add(p);
+      p = relationshipParent(project, p);
     }
-    if (cur) out.unshift(RELATIONSHIP_ROOT);
+    if (p === RELATIONSHIP_ROOT) out.unshift(RELATIONSHIP_ROOT);
     return out;
   }
 
@@ -902,7 +920,8 @@
     if (isRel) {
       const path = relationshipPath(project, ref);
       out.paths = [path];
-      out.parents = hit.item.parent ? [hit.item.parent] : [];
+      const parent = hit.local ? hit.item.parent : (hit.item.parents || [])[0];
+      out.parents = parent && parent !== RELATIONSHIP_ROOT ? [parent] : [];
       out.subtypes = relationshipSubtypes(project, ref);
       out.descendants = relationshipDescendants(project, ref).size - 1;
       const pairs = (project.rules[ref] || []).map(splitPair);
@@ -957,6 +976,22 @@
     });
     out.viewpoints = project.viewpoints.filter((v) => v.concepts.includes(ref)).map((v) => v.id);
     out.matches = !isRel && hit.abstract ? typeMatches(project, ref) : [];
+    // The categories of a language it extends (SReq 12.4): a base type's own, and those of every base type among its
+    // ancestors, the nearest first, each once. A category that a deeper one of the same base already implies is left
+    // out: Internal Active Structure says Active Structure.
+    const inherited = [];
+    const seen = new Set();
+    for (const a of [ref].concat(lineage)) {
+      const x = project.externalConcepts.find((c) => c.ref === a && c.baseCategories);
+      if (!x) continue;
+      for (const c of x.baseCategories) {
+        if (seen.has(c.key)) continue;
+        seen.add(c.key);
+        inherited.push(Object.assign({ via: a === ref ? null : a }, c));
+      }
+    }
+    const implied = (c) => inherited.some((d) => d !== c && d.base === c.base && d.trail.length > c.trail.length && d.trail[c.trail.length - 1] === c.trail[c.trail.length - 1]);
+    out.inherited = inherited.filter((c) => !implied(c));
     return out;
   }
 
@@ -1006,19 +1041,50 @@
     return out;
   }
 
-  /** The exact matches as they are now, with their members and subtypes: what matchFollowUps compares with (SReq 11.6). */
+  /** How category `catId`'s element types, its sub-categories' included, compare with the concrete subtypes of `type`. */
+  function compareWithType(project, catId, type) {
+    const concrete = new Set(project.elements.filter((e) => !e.abstract).map((e) => e.id));
+    const members = new Set(categoryMembers(project, catId, true).filter((x) => concrete.has(x)));
+    const subs = new Set([...descendants(project, type)].filter((d) => concrete.has(d)));
+    const extra = [...members].filter((x) => !subs.has(x)).sort();
+    const missing = [...subs].filter((x) => !members.has(x)).sort();
+    return { type, exact: members.size > 0 && !extra.length && !missing.length, extra, missing };
+  }
+
+  /**
+   * Each category's link to an element type (SReq 4.6, 11.6): the one it states, `standsFor`, with how its members
+   * compare with that type's concrete subtypes; and the one its members suggest (categoryMatches). Map(category id ->
+   * { stated, computed }), for the categories with either.
+   */
+  function categoryLinks(project) {
+    const computed = categoryMatches(project);
+    const out = new Map();
+    for (const c of project.taxonomy.categories) {
+      const stated = c.standsFor ? compareWithType(project, c.id, c.standsFor) : null;
+      const found = computed.get(c.id) || null;
+      if (stated || found) out.set(c.id, { stated, computed: found });
+    }
+    return out;
+  }
+
+  /**
+   * The exact links as they are now, with their members and subtypes: what matchFollowUps compares with (SReq 11.6).
+   * A link the taxonomy states counts as one its members suggest does.
+   */
   function matchSnapshot(project) {
     const concrete = new Set(project.elements.filter((e) => !e.abstract).map((e) => e.id));
     const pairs = [];
-    for (const [category, m] of categoryMatches(project)) {
-      if (!m.exact) continue;
+    const add = (category, type) => {
+      if (pairs.some((p) => p.category === category && p.type === type)) return;
       pairs.push({
         category,
-        type: m.type,
+        type,
         members: new Set(categoryMembers(project, category, true)),
-        subtypes: new Set([...descendants(project, m.type)].filter((d) => concrete.has(d))),
+        subtypes: new Set([...descendants(project, type)].filter((d) => concrete.has(d))),
       });
-    }
+    };
+    for (const [category, m] of categoryMatches(project)) if (m.exact) add(category, m.type);
+    for (const c of project.taxonomy.categories) if (c.standsFor && compareWithType(project, c.id, c.standsFor).exact) add(c.id, c.standsFor);
     return { pairs };
   }
 
@@ -1065,6 +1131,68 @@
     return n;
   }
 
+  // ---- the languages a project extends (SReq 12, SD-18)
+
+  /** Where a project's concepts live, <base>onto#: what a language that extends it imports. */
+  function conceptNamespace(project) {
+    return namespaces(project)[project.meta.prefix];
+  }
+
+  /**
+   * The languages a project extends that the studio has: for each of its imports whose namespace is that of a
+   * candidate ({ namespace, project, bundled }: a template, or documents loaded in the browser),
+   * { prefix, namespace, title, project, bundled }.
+   */
+  function basesFor(project, candidates) {
+    const own = conceptNamespace(project);
+    const out = [];
+    for (const imp of project.meta.imports || []) {
+      if (!imp.prefix || !imp.namespace || imp.namespace === own) continue;
+      const hit = (candidates || []).find((c) => c && c.project && c.namespace === imp.namespace);
+      if (hit) out.push({ prefix: imp.prefix, namespace: imp.namespace, title: hit.project.meta.title || imp.prefix, project: hit.project, bundled: !!hit.bundled });
+    }
+    return out;
+  }
+
+  /**
+   * The project with the types of the languages it extends added as outside concepts, for the page to show and query
+   * (SReq 12.2–12.4): each base type as prefix:id, its parents named the same way (the core root for none), with its
+   * label, definition, and the base's categories it is in or that stand for it; the base's attributes too. An outside
+   * concept the project declares itself wins. Nothing generates or checks this: the project stays as it is.
+   */
+  function withBases(project, bases) {
+    if (!bases || !bases.length) return project;
+    const declared = new Set(project.externalConcepts.map((x) => x.ref));
+    const extra = [];
+    const attributes = [];
+    for (const b of bases) {
+      const bp = normalize(b.project);
+      const local = new Set(bp.elements.map((e) => e.id).concat(bp.relationships.map((r) => r.id), bp.attributes.map((a) => a.id)));
+      const name = (ref) => (local.has(ref) ? `${b.prefix}:${ref}` : ref);
+      const label = (id) => { const c = bp.taxonomy.categories.find((x) => x.id === id); return c ? c.label || humanize(c.id) : id; };
+      const cats = (item) => uniq((item.categories || []).concat(bp.taxonomy.categories.filter((c) => c.standsFor === item.id).map((c) => c.id)))
+        .map((c) => ({ key: `${b.namespace} ${c}`, base: b.title, trail: categoryPath(bp, c), label: categoryPath(bp, c).map(label).join(" › ") }));
+      const common = (item, kind) => ({ label: item.label || humanize(item.id), kind, definition: item.definition || "", base: b.namespace, baseTitle: b.title, baseCategories: cats(item) });
+      for (const e of bp.elements) {
+        const ref = `${b.prefix}:${e.id}`;
+        if (declared.has(ref)) continue;
+        extra.push(Object.assign({ ref, abstract: !!e.abstract, parents: e.parents.length ? e.parents.map(name) : [ELEMENT_ROOT], fill: (e.notation && e.notation.fill) || "" }, common(e, "element")));
+      }
+      for (const r of bp.relationships) {
+        const ref = `${b.prefix}:${r.id}`;
+        if (declared.has(ref)) continue;
+        extra.push(Object.assign({ ref, abstract: false, parents: [r.parent ? name(r.parent) : RELATIONSHIP_ROOT], notation: r.notation || "" }, common(r, "relationship")));
+      }
+      for (const a of bp.attributes) attributes.push(Object.assign({}, a, { id: `${b.prefix}:${a.id}`, domain: a.domain.map(name), base: b.namespace, baseTitle: b.title }));
+    }
+    return Object.assign({}, project, { externalConcepts: project.externalConcepts.concat(extra), attributes: project.attributes.concat(attributes) });
+  }
+
+  /** The base type `ref` is, in a project withBases() made: its entry, or null. */
+  function baseConcept(project, ref) {
+    return project.externalConcepts.find((x) => x.ref === ref && x.base) || null;
+  }
+
   return {
     FORMAT, STD_PREFIXES, VIS, KNOWN_LANGUAGES, CORE_STAKEHOLDERS, CORE_CONCERNS, VIEW_TYPES,
     SHAPES, CORE_SHAPES, BUILTIN_SHAPES, SHAPE_NAMES, LINE_STYLES, LINE_STYLE_IRIS, LINE_STYLE_NAMES,
@@ -1078,6 +1206,9 @@
     removeParent, relationshipSubtypes, relationshipDescendants, relationshipPath, setRelationshipParent, subcategories,
     categoryDescendants, categoryPath, categoryMembers, narrowerOrder, orderName, reorder, shift, clearOrder, moveCategory,
     classify, unclassify, regroup, viewpointCategoryDescendants, moveViewpointCategory, moveViewpoint, relationsOf,
-    categoryMatches, typeMatches, matchSnapshot, matchFollowUps, applyFollowUp,
+    categoryMatches, typeMatches, matchSnapshot, matchFollowUps, applyFollowUp, compareWithType, categoryLinks,
+    relationshipParent,
+    // the languages a project extends (SReq 12)
+    conceptNamespace, basesFor, withBases, baseConcept,
   };
 });

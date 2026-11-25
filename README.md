@@ -42,7 +42,7 @@ the language. The studio generates one document per manifest property:
 |---|---|---|
 | `arch:modelConcepts` | `<slug>-onto.ttl`: `owl:Ontology` at `<base>onto#` | Element types (`owl:Class` ⊑ `arch:Element`, abstract ones marked `arch:isAbstractClass true`). Relationship types as three terms each: a `QualifiedRelationship` subclass carrying `skos:notation` (the letter of the specification's tables), its direct predicate (`arch:unqualifiedForm`) with `arch:domainIncludes`/`arch:rangeIncludes` guidance, and a `qualified<Rel>` predicate. Attributes (`owl:DatatypeProperty`). |
 | `arch:formalRules` | `<slug>-shapes.ttl`: `<base>shapes#` | SHACL. Per relationship, a `sh:NodeShape` targeting the relationship class with an `sh:or` of `(source, target)` `sh:and` pairs; per source element, a shape over its direct predicates; per attribute, datatype, cardinality and `sh:in`. This is the layout of the published ArchiMate shapes. |
-| `arch:conceptClassification` | `<slug>-tax.ttl`: a plain `skos:ConceptScheme` at `<base>tax#` | Categories (`skos:narrower` down to the classes); a category's own order of its groups or types, as an ISO 25964 thesaurus array under it (`<Category>Order`, `iso-thes:superOrdinate`); and the collections below. |
+| `arch:conceptClassification` | `<slug>-tax.ttl`: a plain `skos:ConceptScheme` at `<base>tax#` | Categories (`skos:narrower` down to the classes), each linked to the element type it stands for (`rdfs:seeAlso`); a category's own order of its groups or types, as an ISO 25964 thesaurus array under it (`<Category>Order`, `iso-thes:superOrdinate`); and the collections below. |
 | `arch:relationshipProposalOrder` | in `<slug>-tax.ttl` | Each order in which a modelling tool proposes relationship types when two elements are connected: the general one, and any that name the source or target types they apply to (`arch:domainIncludes`, `arch:rangeIncludes`). |
 | `arch:paletteGrouping`, `arch:diagramGroupOrder` | in `<slug>-tax.ttl` | The dimensions a palette groups element types by, the main one first, and the groups a diagram keeps in bands, the top band first: each a `skos:OrderedCollection` of categories. |
 | `arch:architectureViewpoints`, `arch:viewpointLibrary` | `<slug>-viewpoints.ttl`: `<base>viewpoints#` | `arch:Viewpoint` individuals (`arch:includesConcept`, `arch:targetsStakeholder`, `arch:viewpointFramesConcern`, `arch:viewpointHasPurpose`, `arch:viewType`), the stakeholders, concerns and purposes they use, and the `ViewpointCatalog` concept scheme. |
@@ -66,18 +66,23 @@ the published Backstage, C4 and LeanIX manifests and shapes, and the manifest re
 
 - **Overview**: identity, IRIs, versions, which assets to ship, the manifest's
   stakeholders and considerations, and other languages you extend (for example,
-  `cp:Microservice` ⊑ `am4:ApplicationComponent`).
+  `cp:Microservice` ⊑ `am4:ApplicationComponent`). For each, it says whether the studio shows
+  that language: ArchiMate 4.0 is built in, and another is shown once you load its documents,
+  which stay in that browser.
 - **Elements**: the type hierarchy as a tree. A type with two parents appears under both,
-  and choosing it highlights its other place; a type of another language that one of yours
-  specializes, such as `am4:ApplicationComponent`, heads its subtypes. Abstract and concrete
-  types, labels, definitions, taxonomy categories and default notation. Each type's page opens
-  with its **relations**: a diagram of its parents, subtypes and categories, its paths to the
-  root, the rules it is the source or target of, the attributes, guidance and proposal orders
+  and choosing it highlights its other place. When your metamodel extends or tailors another,
+  such as ArchiMate 4.0, that language's types are in the tree too, read only, with yours under
+  the ones they specialize; drop one of your types on one of theirs to specialize it, or open
+  theirs to make a subtype. Abstract and concrete types, labels, definitions, taxonomy categories
+  and default notation. Each type's page opens with its **relations**: a diagram of its parents,
+  subtypes and categories, its paths to the root, the categories it has in the language it
+  extends, the rules it is the source or target of, the attributes, guidance and proposal orders
   that name it or an ancestor, and the viewpoints that include it.
-- **Relationships**: the types as a tree of what each is a kind of. Class, direct predicate,
-  notation letter, specialization (a subtype that keeps its parent's predicate, such as
-  `ReadAccess` → `accesses`, declares no predicate of its own), domain/range guidance, and the
-  line: its style, both ends and colour. Each page shows the type's relations too.
+- **Relationships**: the types as a tree of what each is a kind of, those of a language you
+  extend among them. Class, direct predicate, notation letter, specialization (a subtype that
+  keeps its parent's predicate, such as `ReadAccess` → `accesses`, declares no predicate of its
+  own), domain/range guidance, and the line: its style, both ends and colour. Each page shows
+  the type's relations too.
 - **Attributes**: datatype, applies-to, allowed values, required or repeatable.
 - **Relationship rules**: a source × target matrix. Look at one relationship to toggle
   cells, rows or columns. Look at all of them to see the letters (as in the ArchiMate
@@ -86,10 +91,13 @@ the published Backstage, C4 and LeanIX manifests and shapes, and the manifest re
   unconstrained.
 - **Taxonomy**: the category tree with each category's members in it, a list of the types in
   no category yet, and a **grid** that crosses two dimensions, such as ArchiMate's domains and
-  aspects, with each element type in its cell. A category whose element types are exactly, or
-  nearly, the subtypes of one abstract type says so, and lists any difference with a fix: the
-  studio works this out from the members alone. Changing one side of such a pair offers the
-  same change on the other. The order of a category's groups and types, the palette grouping
+  aspects, with each element type in its cell. A category names the element type it stands
+  for, as the published taxonomies do with `rdfs:seeAlso`, and the page compares that type's
+  subtypes with the category's members, with a fix for each difference. Where no type is named,
+  the studio works one out from the members alone. Changing one side of such a pair offers the
+  same change on the other. The taxonomy of a language you extend is shown beside yours, read
+  only, with your types in the categories of the types they specialize. The order of a
+  category's groups and types, the palette grouping
   and the diagram bands are written for la-gram's palette, and so are the relationship
   proposal orders, general and scoped.
 - **Viewpoints**: the catalog as a tree of categories and viewpoints; stakeholders, concerns,
@@ -125,6 +133,7 @@ can also be done from the row's ⋯ menu (or a right-click) and from the keyboar
 | Order a category's groups or types | drop above or below a row | Alt+Up, Alt+Down; *Move up*, *Move down* |
 | Order a proposal order, the palette grouping or the diagram bands | drag a line | Alt+Up, Alt+Down, or the ↑ ↓ buttons |
 | Move a type to another cell of the grid | drag it; Alt keeps it in its own cell too | the tree, or the type's page |
+| Specialize a type of the language you extend | drop your type on it | *Move under…*, *Add a parent…*; *New subtype of it* on its row or page |
 
 The arrow keys move between rows, Right and Left unfold and fold them, Enter opens a row,
 Space chooses it together with others (as Ctrl-click and Shift-click do), and Shift+F10 opens
@@ -150,9 +159,9 @@ Generating, importing and generating again is lossless. The tests check that all
 documents come back isomorphic. Importing a published set keeps what the studio's project
 model holds, the order of its groups and types, its palette grouping and its diagram group
 order included: importing ArchiMate 4.0 and generating it again gives la-gram the same
-palette. It leaves out, for now, icons, alternative styles, rendering modes, presentation
-contexts, element and principle shapes, relationship tables and the source attribution on
-classes and categories.
+palette, and keeps the type each category stands for. It leaves out, for now, icons,
+alternative styles, rendering modes, presentation contexts, element and principle shapes,
+relationship tables and the source attribution on classes and categories.
 
 ## Using the result in la-gram
 

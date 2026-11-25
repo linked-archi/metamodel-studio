@@ -413,6 +413,19 @@
       const concepts = g.subjects(SKOS + "inScheme", taxScheme).filter((c) => g.types(c).includes(SKOS + "Concept"));
       const catIds = new Map();
       for (const c of concepts) catIds.set(c, ref(c, "taxonomy"));
+      // The element type a category stands for (SReq 4.6, SD-17): its rdfs:seeAlso to an element type, of this
+      // language or of one its ontology imports. Other links stay out: ArchiMate 4.0's from two relationship
+      // categories to its strength collections, and links to documents.
+      const importedNs = new Set(g.iris(ontologyIri, OWL + "imports").map((x) => (/[#/]$/.test(x) ? x : x + "#")));
+      const isClass = (iri) => g.types(iri).includes(OWL + "Class") || g.iris(iri, RDFS + "subClassOf").length > 0 || g.subjects(RDFS + "subClassOf", iri).length > 0;
+      const standsForOf = (c) => {
+        for (const o of g.iris(c, RDFS + "seeAlso")) {
+          if (relClasses.has(o)) continue;
+          if (inNs(o)) { if (elemIds.has(o.slice(ns.length))) return o.slice(ns.length); continue; }
+          if (importedNs.has(nsOf(o)) || isClass(o)) { const r = ref(o, "concept"); if (core.isCurie(r)) return r; }
+        }
+        return "";
+      };
       for (const c of concepts) {
         const id = catIds.get(c);
         const broader = g.iris(c, SKOS + "broader").find((b) => catIds.has(b)) ||
@@ -422,6 +435,7 @@
           label: g.text(c, SKOS + "prefLabel", lang),
           definition: g.text(c, SKOS + "definition", lang),
           parent: broader ? catIds.get(broader) : "",
+          standsFor: standsForOf(c),
           categoryOrder: [],
           memberOrder: [],
           orderLabel: "",
@@ -545,7 +559,7 @@
       `Namespace ${ns} (prefix ${prefix}).`,
       `${project.elements.length} element types (${project.elements.filter((e) => e.abstract).length} abstract), ${project.relationships.length} relationship types, ${project.attributes.length} attributes.`,
       `${ruleCount} relationship rules from SHACL shapes.`,
-      `${project.taxonomy.categories.length} taxonomy categories, ${project.taxonomy.categories.filter((c) => c.categoryOrder.length || c.memberOrder.length).length} of them ordered, ${project.proposalOrders.length} proposal orders, ${project.viewpoints.length} viewpoints in ${project.viewpointCategories.length} categories, ${project.stakeholders.length} stakeholders, ${project.concerns.length} concerns, ${project.purposes.length} purposes.`,
+      `${project.taxonomy.categories.length} taxonomy categories, ${project.taxonomy.categories.filter((c) => c.categoryOrder.length || c.memberOrder.length).length} of them ordered, ${project.taxonomy.categories.filter((c) => c.standsFor).length} standing for a type, ${project.proposalOrders.length} proposal orders, ${project.viewpoints.length} viewpoints in ${project.viewpointCategories.length} categories, ${project.stakeholders.length} stakeholders, ${project.concerns.length} concerns, ${project.purposes.length} purposes.`,
       `Palette grouping: ${project.taxonomy.paletteGrouping.members.join(", ") || "none"}. Diagram group order: ${project.taxonomy.diagramGroupOrder.members.join(", ") || "none"}.`,
       `Notation: ${project.elements.filter((e) => e.notation && Object.keys(e.notation).length).length} element and ${project.relationships.filter((r) => r.style && Object.keys(r.style).length).length} relationship descriptors, ${project.shapes.length} own shapes.`,
     );

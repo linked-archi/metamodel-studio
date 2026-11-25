@@ -449,6 +449,7 @@
       "label": "Elements",
       "definition": "",
       "parent": "",
+      "standsFor": "",
       "categoryOrder": [],
       "memberOrder": [],
       "orderLabel": ""
@@ -458,6 +459,7 @@
       "label": "Compute",
       "definition": "Things that run code.",
       "parent": "Elements",
+      "standsFor": "",
       "categoryOrder": [],
       "memberOrder": [
        "Microservice",
@@ -471,6 +473,7 @@
       "label": "Data",
       "definition": "Things that hold state.",
       "parent": "Elements",
+      "standsFor": "",
       "categoryOrder": [],
       "memberOrder": [],
       "orderLabel": ""
@@ -480,6 +483,7 @@
       "label": "Integration",
       "definition": "Things that connect workloads.",
       "parent": "Elements",
+      "standsFor": "",
       "categoryOrder": [],
       "memberOrder": [],
       "orderLabel": ""
@@ -489,6 +493,7 @@
       "label": "Relationships",
       "definition": "",
       "parent": "",
+      "standsFor": "",
       "categoryOrder": [],
       "memberOrder": [],
       "orderLabel": ""
@@ -498,6 +503,7 @@
       "label": "Structural",
       "definition": "",
       "parent": "Relationships",
+      "standsFor": "",
       "categoryOrder": [],
       "memberOrder": [],
       "orderLabel": ""
@@ -507,6 +513,7 @@
       "label": "Dependency",
       "definition": "",
       "parent": "Relationships",
+      "standsFor": "",
       "categoryOrder": [],
       "memberOrder": [],
       "orderLabel": ""
@@ -8431,6 +8438,7 @@
       "label": "Domain",
       "definition": "A part of the ArchiMate 4.0 language for modelling particular characteristics of an enterprise and its architecture: business, application, technology, common, strategy, motivation, and implementation and migration. Each narrower concept is a domain, and its narrower concepts are the element types that are part of it.",
       "parent": "",
+      "standsFor": "",
       "categoryOrder": [
        "CommonDomain",
        "BusinessDomain",
@@ -8448,6 +8456,7 @@
       "label": "Common Domain",
       "definition": "The common domain: the generic elements the business, application and technology domains share — the behaviour elements (Process, Function, Event, Service), the generic active structure elements (Role, Collaboration, Path) and the composite elements Grouping and Location.",
       "parent": "Domain",
+      "standsFor": "CommonDomainElement",
       "categoryOrder": [],
       "memberOrder": [
        "Process",
@@ -8467,6 +8476,7 @@
       "label": "Business Domain",
       "definition": "The business domain: the elements specific to the business — actors, interfaces, objects and products. Its behaviour is modelled with the elements of the Common Domain.",
       "parent": "Domain",
+      "standsFor": "BusinessDomainElement",
       "categoryOrder": [],
       "memberOrder": [],
       "orderLabel": ""
@@ -8476,6 +8486,7 @@
       "label": "Application Domain",
       "definition": "The application domain: the elements specific to software applications — components, interfaces and data objects. Its behaviour is modelled with the elements of the Common Domain.",
       "parent": "Domain",
+      "standsFor": "ApplicationDomainElement",
       "categoryOrder": [],
       "memberOrder": [],
       "orderLabel": ""
@@ -8485,6 +8496,7 @@
       "label": "Technology Domain",
       "definition": "The technology domain, physical technology included: nodes, devices, system software, networks, equipment, facilities, artifacts and materials.",
       "parent": "Domain",
+      "standsFor": "TechnologyDomainElement",
       "categoryOrder": [],
       "memberOrder": [],
       "orderLabel": ""
@@ -8494,6 +8506,7 @@
       "label": "Strategy Domain",
       "definition": "The strategy domain: resources, capabilities, value streams and courses of action.",
       "parent": "Domain",
+      "standsFor": "StrategyElement",
       "categoryOrder": [],
       "memberOrder": [],
       "orderLabel": ""
@@ -8503,6 +8516,7 @@
       "label": "Motivation Domain",
       "definition": "The motivation domain: the context of and reasons behind the architecture — stakeholders, drivers, goals, requirements, principles and values.",
       "parent": "Domain",
+      "standsFor": "MotivationElement",
       "categoryOrder": [],
       "memberOrder": [],
       "orderLabel": ""
@@ -8512,6 +8526,7 @@
       "label": "Implementation and Migration Domain",
       "definition": "The implementation and migration domain: planning and carrying out changes to the architecture — work packages, deliverables and plateaus.",
       "parent": "Domain",
+      "standsFor": "ImplementationAndMigrationDomainElement",
       "categoryOrder": [],
       "memberOrder": [],
       "orderLabel": ""
@@ -8521,6 +8536,7 @@
       "label": "Aspect",
       "definition": "What an element of ArchiMate 4.0 represents, whatever its domain — a characteristic related to the concerns of different stakeholders: structure, behaviour, a composite or motivation. Each narrower concept is an aspect, and its narrower concepts are its sub-aspects and the element types that are part of it.",
       "parent": "",
+      "standsFor": "",
       "categoryOrder": [
        "StructureAspect",
        "BehaviorAspect",
@@ -8535,6 +8551,7 @@
       "label": "Structure",
       "definition": "The structure aspect: the entities that exist, active or passive. It divides into Active Structure, the performers, and Passive Structure, the objects acted upon.",
       "parent": "Aspect",
+      "standsFor": "",
       "categoryOrder": [],
       "memberOrder": [],
       "orderLabel": ""
@@ -8544,6 +8561,7 @@
       "label": "Active Structure",
       "definition": "The active structure aspect: the entities that can perform behaviour, the subjects of activity — actors, components, nodes, roles, collaborations and their interfaces.",
       "parent": "StructureAspect",
+      "standsFor": "ActiveStructureElement",
       "categoryOrder": [],
       "memberOrder": [],
       "orderLabel": ""
@@ -8553,6 +8571,7 @@
       "label": "Internal Active Structure",
       "definition": "The internal active structure aspect: the entities that perform behaviour — actors, roles, collaborations, components, nodes, devices, system software, equipment and facilities.",
       "parent": "ActiveStructureAspect",
+      "standsFor": "InternalActiveStructureElement",
       "categoryOrder": [],
       "memberOrder": [],
       "orderLabel": ""
@@ -8562,6 +8581,7 @@
       "label": "External Active Structure",
       "definition": "The external active structure aspect: the interfaces, points of access where services are exposed to the environment.",
       "parent": "ActiveStructureAspect",
+      "standsFor": "ExternalActiveStructureElement",
       "categoryOrder": [],
       "memberOrder": [],
       "orderLabel": ""
@@ -8571,6 +8591,7 @@
       "label": "Behavior",
       "definition": "The behaviour aspect: dynamic behaviour — processes, functions, events, services, capabilities, value streams, courses of action and work packages.",
       "parent": "Aspect",
+      "standsFor": "BehaviorElement",
       "categoryOrder": [],
       "memberOrder": [],
       "orderLabel": ""
@@ -8580,6 +8601,7 @@
       "label": "Internal Behavior",
       "definition": "The internal behaviour aspect: units of activity — processes and functions.",
       "parent": "BehaviorAspect",
+      "standsFor": "",
       "categoryOrder": [],
       "memberOrder": [],
       "orderLabel": ""
@@ -8589,6 +8611,7 @@
       "label": "External Behavior",
       "definition": "The external behaviour aspect: explicitly defined, exposed behaviour — services.",
       "parent": "BehaviorAspect",
+      "standsFor": "",
       "categoryOrder": [],
       "memberOrder": [],
       "orderLabel": ""
@@ -8598,6 +8621,7 @@
       "label": "Event",
       "definition": "The event aspect: state changes that trigger or are triggered by other behaviour.",
       "parent": "BehaviorAspect",
+      "standsFor": "",
       "categoryOrder": [],
       "memberOrder": [],
       "orderLabel": ""
@@ -8607,6 +8631,7 @@
       "label": "Passive Structure",
       "definition": "The passive structure aspect: what behaviour is performed on — objects, artifacts, materials, deliverables and resources.",
       "parent": "StructureAspect",
+      "standsFor": "PassiveStructureElement",
       "categoryOrder": [],
       "memberOrder": [],
       "orderLabel": ""
@@ -8616,6 +8641,7 @@
       "label": "Composite",
       "definition": "The composite aspect: elements that may combine several aspects or domains — products, groupings, locations and plateaus.",
       "parent": "Aspect",
+      "standsFor": "CompositeElement",
       "categoryOrder": [],
       "memberOrder": [],
       "orderLabel": ""
@@ -8625,6 +8651,7 @@
       "label": "Motivation",
       "definition": "The motivation aspect: the context of and reasons behind the architecture — stakeholders, drivers, goals, requirements, principles and values.",
       "parent": "Aspect",
+      "standsFor": "MotivationElement",
       "categoryOrder": [],
       "memberOrder": [],
       "orderLabel": ""
@@ -8634,6 +8661,7 @@
       "label": "Relationship",
       "definition": "An ArchiMate 4.0 relationship type. Its narrower concepts are the four categories of Chapter 5, structural, dependency, dynamic and other, each a kind of relationship whose narrower concepts are the relationship types of that category.",
       "parent": "",
+      "standsFor": "",
       "categoryOrder": [
        "StructuralRelationship",
        "DependencyRelationship",
@@ -8648,6 +8676,7 @@
       "label": "Structural Relationship",
       "definition": "Relationships that model the static construction or composition of concepts: composition, aggregation, assignment and realization.",
       "parent": "Relationship",
+      "standsFor": "",
       "categoryOrder": [],
       "memberOrder": [
        "Composition",
@@ -8662,6 +8691,7 @@
       "label": "Dependency Relationship",
       "definition": "Relationships that model how elements are used by or depend on other elements: serving, access, influence and association.",
       "parent": "Relationship",
+      "standsFor": "",
       "categoryOrder": [],
       "memberOrder": [
        "Serving",
@@ -8676,6 +8706,7 @@
       "label": "Dynamic Relationship",
       "definition": "Relationships that model behavioural dependencies between elements: triggering and flow.",
       "parent": "Relationship",
+      "standsFor": "",
       "categoryOrder": [],
       "memberOrder": [
        "Triggering",
@@ -8688,6 +8719,7 @@
       "label": "Other Relationship",
       "definition": "The relationship that falls in none of the other categories: specialization.",
       "parent": "Relationship",
+      "standsFor": "",
       "categoryOrder": [],
       "memberOrder": [],
       "orderLabel": ""
@@ -8697,6 +8729,7 @@
       "label": "Junction",
       "definition": "A connector between relationships of ArchiMate 4.0, not itself a relationship: it connects two or more relationships of the same type. Its narrower concepts are the and-junction and the or-junction.",
       "parent": "",
+      "standsFor": "",
       "categoryOrder": [],
       "memberOrder": [],
       "orderLabel": ""
