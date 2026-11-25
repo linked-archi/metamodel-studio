@@ -9,8 +9,9 @@
  *                                          direct and qualified predicates   (arch:modelConcepts)
  *   <slug>-shapes.ttl      SHACL shapes  — which relationship may connect which types
  *                                                                              (arch:formalRules)
- *   <slug>-tax.ttl         SKOS scheme   — classification of concepts, relationship
- *                                          proposal order               (arch:conceptClassification)
+ *   <slug>-tax.ttl         SKOS scheme   — classification of concepts, the order of its groups and
+ *                                          members, palette grouping, diagram group order and relationship
+ *                                          proposal orders               (arch:conceptClassification)
  *   <slug>-viewpoints.ttl  viewpoints, stakeholders, concerns, purposes and the viewpoint
  *                          catalog     (arch:architectureViewpoints, arch:viewpointLibrary)
  *   <slug>-notation.ttl    notation set — default visual style per concept   (arch:notationSet)
@@ -372,11 +373,17 @@
     const tops = cats.filter((c) => !c.parent);
     const schemeLabel = project.taxonomy.label || `${m.title} Concept Scheme`;
 
+    const ordered = cats.filter((c) => core.narrowerOrder(project, c.id).explicit);
+    const grouping = collectionToWrite(project, "paletteGrouping");
+    const bands = collectionToWrite(project, "diagramGroupOrder");
+    const extras = [];
+    if (ordered.length || grouping || bands) extras.push("the order of its groups and how a palette and a diagram use them");
+    if (project.proposalOrders.length) extras.push("the orders in which a modelling tool proposes its relationship types");
     ontologyHeader(doc, project, ns[T], "Taxonomy", {
       scheme: true,
       nsUri: ns[T],
       nsPrefix: T,
-      description: `Classification of the ${m.title} model concepts${project.proposalOrders.length ? ", and the orders in which a modelling tool proposes its relationship types" : ""}.`,
+      description: `Classification of the ${m.title} model concepts${extras.length ? ", " + extras.join(", and ") : ""}.`,
       more: [
         [doc.ref("skos:prefLabel"), doc.lit(schemeLabel, lang)],
         [doc.ref("skos:hasTopConcept"), tops.map((c) => doc.ref(c.id, T))],
@@ -400,6 +407,39 @@
       ]);
     }
 
+    // Orders (SReq 4.4, SD-14): a category's narrower concepts in order, as an ISO 25964 thesaurus array under it,
+    // which the kernel reads to order la-gram's palette. Only a category with an order of its own has one: the
+    // others are listed by name. The array lists every narrower concept once, sub-categories first.
+    for (const c of ordered) {
+      const o = core.narrowerOrder(project, c.id);
+      doc.add(doc.ref(core.orderName(c.id), T), [
+        ["a", [doc.ref("skos:OrderedCollection"), doc.ref("iso-thes:ThesaurusArray")]],
+        [doc.ref("skos:prefLabel"), doc.lit(c.orderLabel || `${c.label || core.humanize(c.id)} in Order`, lang)],
+        [doc.ref("iso-thes:superOrdinate"), doc.ref(c.id, T)],
+        [doc.ref("skos:memberList"), doc.list(o.categories.map((id) => doc.ref(id, T)).concat(o.members.map((id) => doc.ref(id, P))))],
+      ]);
+    }
+
+    // The palette grouping and the diagram group order (SReq 4.5): ordered collections of categories the manifest
+    // names with arch:paletteGrouping and arch:diagramGroupOrder.
+    if (grouping) {
+      doc.add(doc.ref(grouping.id, T), [
+        ["a", doc.ref("skos:OrderedCollection")],
+        [doc.ref("skos:prefLabel"), doc.lit(grouping.label || "Palette Grouping", lang)],
+        [doc.ref("skos:definition"), doc.lit(grouping.definition || "The classification dimensions a palette groups element types by, the main one first.", lang)],
+        [doc.ref("skos:memberList"), doc.list(grouping.members.map((id) => doc.ref(id, T)))],
+      ]);
+    }
+    if (bands) {
+      doc.add(doc.ref(bands.id, T), [
+        ["a", doc.ref("skos:OrderedCollection")],
+        [doc.ref("skos:prefLabel"), doc.lit(bands.label || "Diagram Group Order", lang)],
+        [doc.ref("skos:definition"), doc.lit(bands.definition || "The groups a diagram keeps in bands, top band first.", lang)],
+        [doc.ref("skos:scopeNote"), text(doc, bands.scopeNote, lang)],
+        [doc.ref("skos:memberList"), doc.list(bands.members.map((id) => doc.ref(id, T)))],
+      ]);
+    }
+
     // Proposal orders (SReq 4.2, SD-4): ordered collections of relationship types, named from the manifest with
     // arch:relationshipProposalOrder. A scoped one names the types it applies to with domain/rangeIncludes.
     for (const o of proposalOrdersToWrite(project)) {
@@ -417,6 +457,14 @@
       ]);
     }
     return doc.render();
+  }
+
+  /** The palette grouping or the diagram group order, when it names a category the project defines; null otherwise. */
+  function collectionToWrite(project, key) {
+    const c = project.taxonomy[key];
+    const ids = new Set(project.taxonomy.categories.map((x) => x.id));
+    const members = (c.members || []).filter((id, i, all) => ids.has(id) && all.indexOf(id) === i);
+    return members.length && c.id ? Object.assign({}, c, { members }) : null;
   }
 
   /** The proposal orders worth writing: those that list a relationship type the project defines. */
@@ -616,6 +664,9 @@
       [doc.ref("arch:conceptClassification"), a.taxonomy ? doc.ref(`${P}tax:`) : null],
       // The orders live in the taxonomy document (SReq 1.4, SD-4).
       [doc.ref("arch:relationshipProposalOrder"), a.taxonomy ? proposalOrdersToWrite(project).map((o) => doc.ref(o.id, `${P}tax`)) : null],
+      // So are the palette grouping and the diagram group order (SReq 4.5).
+      [doc.ref("arch:paletteGrouping"), a.taxonomy && collectionToWrite(project, "paletteGrouping") ? doc.ref(project.taxonomy.paletteGrouping.id, `${P}tax`) : null],
+      [doc.ref("arch:diagramGroupOrder"), a.taxonomy && collectionToWrite(project, "diagramGroupOrder") ? doc.ref(project.taxonomy.diagramGroupOrder.id, `${P}tax`) : null],
       [doc.ref("arch:architectureViewpoints"), a.viewpoints ? doc.ref(`${P}vp:`) : null],
       [doc.ref("arch:viewpointLibrary"), a.viewpoints ? doc.ref("ViewpointCatalog", `${P}vp`) : null],
       [doc.ref("arch:notationSet"), a.notation ? doc.ref(core.notationSetName(project), `${P}not`) : null],

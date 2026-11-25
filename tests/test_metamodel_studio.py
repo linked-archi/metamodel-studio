@@ -6,7 +6,8 @@ They skip when Node is not installed. What they pin:
 
 - every template generates Turtle that parses, with no error-level finding;
 - every core and core-vis term the documents use is declared in core or core-vis (SReq 1.5);
-- the manifest is an ``arch:Metamodel`` naming every asset document and every proposal order;
+- the manifest is an ``arch:Metamodel`` naming every asset document, every proposal order, the palette grouping
+  and the diagram group order;
 - the generated SHACL accepts permitted relationships and attribute values and rejects the rest;
 - generate -> import -> generate is lossless, so a published set can be edited again;
 - importing the published ArchiMate 4.0 keeps what the project model holds;
@@ -84,7 +85,7 @@ class TestGeneratedDocumentsParse(StudioTestCase):
                     self.assertGreater(len(store), 0, path.name)
                 self.assertTrue((out / "README.md").is_file())
                 project = json.loads(next(out.glob("*.studio.json")).read_text(encoding="utf-8"))
-                self.assertEqual(project["format"], "linked-archi-metamodel-studio/2")
+                self.assertEqual(project["format"], "linked-archi-metamodel-studio/3")
 
     def test_every_template_has_no_errors(self):
         for name in ("blank", "cloudplatform", "archimate4"):
@@ -146,6 +147,28 @@ class TestManifest(StudioTestCase):
         self.assertEqual(assets["notationSet"], {base + "notation#CloudPlatformStandardNotation"})
         self.assertEqual(assets["basedOnFramework"], {base + "metamodel#CloudPlatformFramework"})
         self.assertEqual(assets["relationshipProposalOrder"], {base + "tax#ProposalOrder", base + "tax#WorkloadToResourceOrder"})
+        self.assertEqual(assets["paletteGrouping"], {base + "tax#PaletteGrouping"})
+        self.assertEqual(assets["diagramGroupOrder"], {base + "tax#DiagramGroupOrder"})
+
+    def test_orders_are_thesaurus_arrays_under_their_category(self):
+        # SReq 4.4: an ISO 25964 thesaurus array under the category, its members in order, read here with
+        # independent tooling.
+        out = self.generate(self.template("archimate4"))
+        store = pyoxigraph.Store()
+        store.bulk_load(path=str(out / "archimate4-tax.ttl"), format=pyoxigraph.RdfFormat.TURTLE)
+        rows = list(store.query("""
+            PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+            PREFIX iso-thes: <http://purl.org/iso25964/skos-thes#>
+            PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+            SELECT ?array ?category (COUNT(?member) AS ?n) WHERE {
+              ?array a iso-thes:ThesaurusArray, skos:OrderedCollection ;
+                     iso-thes:superOrdinate ?category ; skos:memberList/rdf:rest*/rdf:first ?member .
+            } GROUP BY ?array ?category"""))
+        tax = "https://meta.linked.archi/archimate4/tax#"
+        found = {r["array"].value.removeprefix(tax): (r["category"].value.removeprefix(tax), int(r["n"].value)) for r in rows}
+        self.assertEqual(len(found), 7)
+        self.assertEqual(found["DomainOrder"], ("Domain", 7))
+        self.assertEqual(found["CommonDomainOrder"], ("CommonDomain", 9))
 
 
 @unittest.skipUnless(pyshacl, "pyshacl is not installed")

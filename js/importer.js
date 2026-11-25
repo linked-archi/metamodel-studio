@@ -37,6 +37,7 @@
   const BIBO = "http://purl.org/ontology/bibo/";
   const ARCH = "https://meta.linked.archi/core#";
   const ARCHVP = "https://meta.linked.archi/core-viewpoints#";
+  const ISO_THES = core.STD_PREFIXES["iso-thes"];
   const VIS = core.VIS;
 
   class Graph {
@@ -421,11 +422,31 @@
           label: g.text(c, SKOS + "prefLabel", lang),
           definition: g.text(c, SKOS + "definition", lang),
           parent: broader ? catIds.get(broader) : "",
+          categoryOrder: [],
+          memberOrder: [],
+          orderLabel: "",
         });
         for (const n of g.iris(c, SKOS + "narrower")) {
           const r = ref(n, "concept");
           const item = project.elements.find((e) => e.id === r) || project.relationships.find((x) => x.id === r);
           if (item && !item.categories.includes(id)) item.categories.push(id);
+        }
+      }
+      // ---- orders (SReq 4.4, 7.2, SD-14): the thesaurus array under a category, the first that lists any, as the
+      // kernel reads it. Its sub-categories and its members are kept apart, each in their order.
+      for (const c of concepts) {
+        const cat = project.taxonomy.categories.find((x) => x.id === catIds.get(c));
+        if (!cat) continue;
+        for (const array of g.subjects(ISO_THES + "superOrdinate", c)) {
+          const list = g.objects(array, SKOS + "memberList").flatMap((h) => g.list(h)).filter((o) => o.termType === "NamedNode");
+          if (!list.length) continue;
+          for (const o of list) {
+            if (catIds.has(o.value)) cat.categoryOrder.push(catIds.get(o.value));
+            else cat.memberOrder.push(ref(o.value, "concept"));
+          }
+          cat.orderLabel = g.text(array, SKOS + "prefLabel", lang);
+          if (ref(array, "taxonomy") !== core.orderName(cat.id)) report.push(`The order of category ${cat.id}, ${array}, is written as ${core.orderName(cat.id)}.`);
+          break;
         }
       }
     }
@@ -447,6 +468,21 @@
         domain: g.iris(order, ARCH + "domainIncludes").map((x) => ref(x, "concept")),
         range: g.iris(order, ARCH + "rangeIncludes").map((x) => ref(x, "concept")),
       });
+    }
+
+    // ---- the palette grouping and the diagram group order (SReq 4.5, 7.2): ordered collections of categories
+    // the manifest names. Each keeps its own name, label and notes.
+    for (const [prop, key] of [["paletteGrouping", "paletteGrouping"], ["diagramGroupOrder", "diagramGroupOrder"]]) {
+      const iri = manifest ? g.iris(manifest, ARCH + prop)[0] : null;
+      if (!iri) continue;
+      const id = ref(iri, "taxonomy");
+      if (!core.LOCAL_NAME.test(id)) { report.push(`The ${prop} ${iri} is outside ${ownNs.taxonomy}: it was left out.`); continue; }
+      const target = project.taxonomy[key];
+      target.id = id;
+      target.label = g.text(iri, SKOS + "prefLabel", lang);
+      target.definition = g.text(iri, SKOS + "definition", lang);
+      if ("scopeNote" in target) target.scopeNote = g.text(iri, SKOS + "scopeNote", lang);
+      target.members = g.objects(iri, SKOS + "memberList").flatMap((h) => g.list(h)).filter((o) => o.termType === "NamedNode").map((o) => ref(o.value, "taxonomy"));
     }
 
     // ---- viewpoints
@@ -509,7 +545,8 @@
       `Namespace ${ns} (prefix ${prefix}).`,
       `${project.elements.length} element types (${project.elements.filter((e) => e.abstract).length} abstract), ${project.relationships.length} relationship types, ${project.attributes.length} attributes.`,
       `${ruleCount} relationship rules from SHACL shapes.`,
-      `${project.taxonomy.categories.length} taxonomy categories, ${project.proposalOrders.length} proposal orders, ${project.viewpoints.length} viewpoints in ${project.viewpointCategories.length} categories, ${project.stakeholders.length} stakeholders, ${project.concerns.length} concerns, ${project.purposes.length} purposes.`,
+      `${project.taxonomy.categories.length} taxonomy categories, ${project.taxonomy.categories.filter((c) => c.categoryOrder.length || c.memberOrder.length).length} of them ordered, ${project.proposalOrders.length} proposal orders, ${project.viewpoints.length} viewpoints in ${project.viewpointCategories.length} categories, ${project.stakeholders.length} stakeholders, ${project.concerns.length} concerns, ${project.purposes.length} purposes.`,
+      `Palette grouping: ${project.taxonomy.paletteGrouping.members.join(", ") || "none"}. Diagram group order: ${project.taxonomy.diagramGroupOrder.members.join(", ") || "none"}.`,
       `Notation: ${project.elements.filter((e) => e.notation && Object.keys(e.notation).length).length} element and ${project.relationships.filter((r) => r.style && Object.keys(r.style).length).length} relationship descriptors, ${project.shapes.length} own shapes.`,
     );
     return { project: core.normalize(project), report };

@@ -16,6 +16,9 @@ guarantees its users and the tools that read its output: la-gram and the Linked.
   with a core fallback and path templates.
 - **Proposal order.** An ordered list of relationship types a modelling tool proposes when two elements are
   connected. The general order applies to every pair; a scoped one names source and/or target types.
+- **Dimension.** A category whose sub-categories classify the same types another way than a sibling dimension does:
+  ArchiMate 4.0's Domain and Aspect. The palette grouping names the dimensions a palette groups by.
+- **Row.** In a tree, an item under one of its parents. An item with two parents has two rows.
 
 ---
 
@@ -39,8 +42,9 @@ guarantees its users and the tools that read its output: la-gram and the Linked.
    `owl:versionIRI` or `owl:priorVersion`. The other documents carry `owl:imports` and `owl:versionIRI`
    (`<namespace>/<version>#`).
 4. The manifest names each document with the core property for its role (`arch:modelConcepts`, `arch:formalRules`,
-   `arch:conceptClassification`, `arch:architectureViewpoints`, `arch:viewpointLibrary`, `arch:notationSet`), and
-   each proposal order with `arch:relationshipProposalOrder`.
+   `arch:conceptClassification`, `arch:architectureViewpoints`, `arch:viewpointLibrary`, `arch:notationSet`), each
+   proposal order with `arch:relationshipProposalOrder`, and the palette grouping and the diagram group order with
+   `arch:paletteGrouping` and `arch:diagramGroupOrder` (4.5).
 5. Every `arch:` and `arch-vis:` term the documents use is declared in core or core-vis as published (test).
 
 ### Requirement 2: Model concepts
@@ -66,6 +70,13 @@ guarantees its users and the tools that read its output: la-gram and the Linked.
 2. Each proposal order is a `skos:OrderedCollection` in the taxonomy document, with `skos:memberList` in order. A
    scoped order names its source types with `arch:domainIncludes` and its target types with `arch:rangeIncludes`.
 3. The manifest names every proposal order (1.4). A metamodel has at most one general order.
+4. A category with an order of its own has an ISO 25964 thesaurus array under it: a `skos:OrderedCollection` and
+   `iso-thes:ThesaurusArray` named `<Category>Order`, with `iso-thes:superOrdinate` the category and a
+   `skos:memberList` that lists each concept narrower than the category once, its sub-categories first. A category
+   with no order of its own has none, and a modelling tool lists its narrower concepts by name.
+5. The palette grouping (the dimensions a palette groups element types by, the main one first) and the diagram group
+   order (the groups a diagram keeps in bands, the top band first) are `skos:OrderedCollection`s of categories in the
+   taxonomy document, named by the manifest (1.4). Each is written only when it names a category.
 
 ### Requirement 5: Viewpoints
 
@@ -92,8 +103,10 @@ guarantees its users and the tools that read its output: la-gram and the Linked.
 
 1. Any published Linked.Archi documents load, by file or URL, in any order and any subset.
 2. Import reads element and relationship types, attributes, rules from relationship shapes, attribute constraints,
-   the taxonomy, proposal orders (from the manifest's `arch:relationshipProposalOrder`), viewpoints, the manifest
-   and the notation in core-vis terms, own shapes included.
+   the taxonomy, the orders under its categories, proposal orders (from the manifest's
+   `arch:relationshipProposalOrder`), the palette grouping and the diagram group order (from the manifest's
+   `arch:paletteGrouping` and `arch:diagramGroupOrder`), viewpoints, the manifest and the notation in core-vis
+   terms, own shapes included.
 3. Output of earlier studio versions still imports: `archvis:shape` and `archvis:arrowHead` literals, literal line
    styles and `arch:RelationshipProposalOrder` collections.
 4. RDF 1.2 Turtle parses, triple terms included. A document that does not parse is named in the error.
@@ -112,11 +125,13 @@ guarantees its users and the tools that read its output: la-gram and the Linked.
    manifest loaded.
 2. The kernel reads, for each element type, the shape and colours the project gives it; for each relationship type,
    its line style, both line ends and colour; the proposal orders with their members in order; for each
-   relationship type with rules, exactly the permitted pairs.
+   relationship type with rules, exactly the permitted pairs; and a palette with a section for each group of the
+   palette grouping's first dimension, groups and types in the orders the project gives them.
 3. The kernel reports nothing incomplete about a template: an extension loaded beside the language it extends, a
    language alone.
 4. Importing the published ArchiMate 4.0 and generating it again keeps, as the kernel reads them, every element
-   type's shape, every relationship type's line and ends, and all its proposal orders.
+   type's shape, every relationship type's line and ends, all its proposal orders, and its palette: the sections,
+   their order and the order of the types in each, and the order of the relationship types.
 5. These checks run with `npm run test:kernel` after `npm install`. Until `@linked-archi/kernel` is published (its
    K02), they run where the kernel's tarball is (`../linked-archi-kernel`), not in CI.
 
@@ -125,4 +140,33 @@ guarantees its users and the tools that read its output: la-gram and the Linked.
 1. The browser app runs from disk or a static host, with no build and no server, and keeps the project in the
    browser's local storage.
 2. The command line runs the same engine under Node with no packages installed.
-3. Project files of format `linked-archi-metamodel-studio/1` open and are migrated to `/2`.
+3. Project files of formats `linked-archi-metamodel-studio/1` and `/2` open and are migrated to `/3`.
+
+### Requirement 11: Editing hierarchies and classification
+
+The page shows how each concept relates to the others, and its hierarchies change by drag and drop, from a menu and
+from the keyboard.
+
+1. Every hierarchy is a tree: element types, relationship types, taxonomy categories with their members, and the
+   viewpoint catalog. An item appears under each of its parents, and choosing one of its rows highlights the others;
+   a type of another language that the project specializes heads the project's subtypes of it, and cannot be
+   changed. Rows fold and unfold.
+2. A move never puts an item under itself or one of its own descendants. While dragging, the row under the pointer
+   says what a drop would do, or why it would not.
+3. Each of these can be done by drag and drop, from the row's menu and from the keyboard: moving an item under
+   another parent, giving an element type a second parent, taking it out of a parent, classifying a type,
+   moving it to another category or adding it to one, and moving a viewpoint or a category (WCAG 2.2, 2.1.1 and
+   2.5.7). Several rows chosen together move together.
+4. The page of each element and relationship type shows its relations: its paths to the root, its parents and
+   subtypes, its categories, the rules it is the source or the target of, the attributes, domain and range guidance
+   and proposal orders that name it or one of its ancestors, the viewpoints that include it, and a diagram of its
+   parents, subtypes and categories. The lists say what the diagram shows.
+5. The taxonomy shows each category's members and the types in no category. A grid crosses two dimensions, with each
+   element type in the cell of its groups; dragging it to another cell moves it to that cell's groups.
+6. A category whose element types, its sub-categories' included, are the concrete subtypes of one abstract type is
+   shown as matching it, on both pages; one that nearly matches shows what differs, with a fix for each difference.
+   The match is worked out from membership alone: nothing is stored and no names are compared (SD-13). When a change
+   to one side of an exact match leaves the other behind, the page offers the same change on the other side.
+7. Sibling categories, a category's members, the palette grouping, the diagram group order and proposal orders are
+   ordered by drag, by Alt+Up and Alt+Down, and from the menu. The order is part of the project and is written
+   (4.4, 4.5).

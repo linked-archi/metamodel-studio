@@ -3,7 +3,8 @@
  *
  * Each check generates a set, loads it as la-gram loads an uploaded metamodel and compares what the kernel reads
  * with what the project says: shapes and colours, lines and line ends, proposal orders, permitted pairs,
- * completeness, viewpoints. The ArchiMate 4.0 checks compare a regenerated set with the published one.
+ * completeness, viewpoints, the palette's sections and their order. The ArchiMate 4.0 checks compare a regenerated
+ * set with the published one.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { ARCHIMATE4, bundledDocument, conceptIri, core, generator, importer, loadBundled, loadGenerated, templates } from './kernel.mjs';
@@ -39,6 +40,11 @@ function expectedLine(r) {
     targetDecor: core.DECORATION_IRIS[s.target || 'open'],
     ...(s.stroke ? { lineColor: s.stroke } : {}),
   };
+}
+
+/** The palette as la-gram shows it: each section's name and its element types, in order. */
+function sections(k) {
+  return k.palette.elementGroups.map((g) => [g.category, g.elements.map((e) => e.iri)]);
 }
 
 function readLine(entry) {
@@ -113,6 +119,22 @@ describe('Cloud Platform, loaded beside ArchiMate 4.0 as an extension is', () =>
       lineStyle: 'DashedLine', sourceDecor: 'NoDecoration', targetDecor: 'OpenArrowhead',
     });
   });
+
+  it("makes a palette section of each group of the palette grouping's dimension, Compute's types in its order (SReq 9.2)", async () => {
+    const p = project('cloudplatform');
+    const cp = (id) => `https://meta.example.org/cloudplatform/onto#${id}`;
+    // The ArchiMate 4.0 types the ontology imports come after, in a section of their own.
+    const own = (k) => sections(k).filter(([, iris]) => iris.some((iri) => iri.startsWith(cp(''))));
+    const k = await loadGenerated(p);
+    expect(own(k).map(([name]) => name)).toEqual(['Compute', 'Data', 'Integration']);
+    expect(own(k)[0][1]).toEqual(['Microservice', 'Function', 'Cluster'].map(cp));
+    // Reordered in the studio, reordered in la-gram.
+    core.reorder(p, 'Compute', 'members', 'Cluster', 'Microservice');
+    core.reorder(p, 'Elements', 'categories', 'Integration', 'Compute');
+    const again = await loadGenerated(p);
+    expect(own(again).map(([name]) => name)).toEqual(['Integration', 'Compute', 'Data']);
+    expect(own(again)[1][1]).toEqual(['Cluster', 'Microservice', 'Function'].map(cp));
+  });
 });
 
 describe('The ArchiMate 4.0 template, loaded alone', () => {
@@ -157,6 +179,13 @@ describe('Importing the published ArchiMate 4.0 and generating it again', () => 
     const scope = (k, order) => ['domainIncludes', 'rangeIncludes'].map((pr) =>
       k.store.getQuads({ termType: 'NamedNode', value: order }, { termType: 'NamedNode', value: `https://meta.linked.archi/core#${pr}` }).map((q) => q.object.value).sort());
     for (const order of published.namedOrders) expect(scope(regenerated, order), order).toEqual(scope(published, order));
+  });
+
+  it("keeps the palette's sections and the order of their types and of the relationship types (SReq 9.4)", () => {
+    expect(sections(published).length).toBeGreaterThan(5);
+    expect(sections(regenerated)).toEqual(sections(published));
+    const relOrder = (k) => k.palette.relationshipTypes.filter((r) => !r.core).map((r) => r.iri);
+    expect(relOrder(regenerated)).toEqual(relOrder(published));
   });
 
   it('generates a set that loads with nothing incomplete', () => {

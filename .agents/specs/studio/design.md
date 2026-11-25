@@ -86,6 +86,54 @@ la-gram does and compare what the kernel reads with the project.
     pipeline copies it there over SSH, as la-gram's copies la-gram, and it runs under the site's headers, la-gram's
     Content-Security-Policy included (README, *Deploying*).
 
+- **SD-12 A tree row is an item under one parent.** An element type with two parents has two rows, and choosing one
+  highlights the other (SReq 11.1).
+  - **A gesture names the parent it is about.** Moving a row replaces that parent with the target, in its place;
+    with Alt, the target is added; dropping on *Element* takes the parent away. A row's key is its parent row's key
+    and its id, so the page can tell the rows of one item apart, keep the one chosen, and follow a row a key moved.
+  - **A parent of another language is an anchor.** It heads the project's subtypes of it and takes drops, but it is
+    not the project's to move.
+  - **Why.** The tree used to list a type under its first parent only. In ArchiMate 4.0, 29 types have two parents,
+    so the six domain types showed as empty roots.
+- **SD-13 The match between a category and an abstract type is computed.** A category matches an abstract type when
+  its concrete element types, its sub-categories' included, are exactly the type's concrete subtypes; it is close
+  when they share at least two and three quarters of the two together (SReq 11.6).
+  - **Why computed.** In ArchiMate 4.0, 16 of the 21 element categories hold exactly the subtypes of one abstract
+    type: the taxonomy repeats the class hierarchy. Working the match out needs no field and no name for one, follows
+    every rename, and judges by structure, as the kernel infers taxonomy dimensions by structure too. No name is
+    compared.
+  - **Offers come from exact matches only,** as they were before the change, so a near match never prompts a
+    change. Classifying in a sub-category, or specializing a subtype, covers the broader offer.
+  - **What it leaves aside.** The published ArchiMate 4.0 taxonomy states the link with `rdfs:seeAlso` from each
+    category to its abstract type. Import does not read it (*Open questions*).
+- **SD-14 A category's order is written only when it has one of its own; the names are ArchiMate 4.0's.**
+  - **The array** is `<Category>Order`, `iso-thes:superOrdinate` the category, its `skos:memberList` every narrower
+    concept once, sub-categories first (SReq 4.4). The kernel reads it to order la-gram's palette.
+  - **Why only where set.** The kernel lists a group with no array by name. Writing an array for every category
+    would freeze into la-gram's palette whatever order an import happened to give.
+  - **Names.** `<Category>Order`, `PaletteGrouping` and `DiagramGroupOrder` are the names the published ArchiMate 4.0
+    taxonomy gives them, so importing it and generating it again gives the same IRIs. An imported palette grouping or
+    diagram group order keeps its own id, label and notes, and an imported array its label.
+  - **Two lists per category,** `categoryOrder` and `memberOrder`, because sub-categories and types live in two
+    namespaces: renaming and deleting reach each through its scope.
+  - **The top level** has no category to hold an order. It keeps the project's order, and the palette grouping says
+    which dimension la-gram's palette is grouped by.
+- **SD-15 Project format `/3`.** A category has `categoryOrder`, `memberOrder` and `orderLabel`; the taxonomy has
+  `paletteGrouping` and `diagramGroupOrder`. `core.normalize` migrates `/1` and `/2`.
+- **SD-16 The page's trees are plain DOM, in `tree.js`, with la-gram's gestures.**
+  - **Gestures.** A drag starts after the pointer moves a few pixels with the button down. The row under it says what
+    a drop would do, or why not; a folded row it rests on unfolds; Escape stops it. Ctrl or Cmd and Shift choose
+    several rows. These are the gestures of la-gram's model explorer. On a touch screen the list scrolls, and a
+    row's menu moves it.
+  - **One change, three ways.** Each drop target decides itself what a drop does, and the change is an engine
+    function in `core.js`. A drag, a menu item and a key call the same function, so every drag has a menu and a key
+    (principle 6).
+  - **Why no framework.** The page runs from disk with no build (principle 4). Why the engine: the workspace's
+    Administration screens need the same moves (PD-16).
+  - **What a viewer folds,** the taxonomy's view and whether relations show are kept in the browser, not the project.
+  - **The page's checks** (`tests/ui/`) drive Chrome or Playwright's Chromium through Playwright, a development
+    dependency. They run locally, as the kernel checks do: the CI image has no browser.
+
 ## Open questions
 
 | Question | Where it is decided |
@@ -93,5 +141,6 @@ la-gram does and compare what the kernel reads with the project.
 | The engine as a shared TypeScript package | A2, once platform decision PD-16 (proposed 2026-11-22) is accepted. Where it lives and is published: SD-11 |
 | Installing from GitLab's package registry with npm 12, which by default refuses the tarballs its instance and group endpoints give (`EALLOWREMOTE`, gitlab-org/gitlab#605970). The project endpoint should avoid it; not yet tried | A2, when the engine is first published; the kernel meets it too |
 | Previewing an imported own shape from its path templates (now: its fallback) | A2 |
-| What import drops from published sets: icons, alternative styles, rendering modes, presentation contexts, palette grouping, diagram group order, element and principle shapes, relationship tables | A2–A4, as the workspace needs them |
+| What import drops from published sets: icons, alternative styles, rendering modes, presentation contexts, element and principle shapes, relationship tables | A2–A4, as the workspace needs them |
+| The published ArchiMate 4.0 taxonomy links each category to its abstract type with `rdfs:seeAlso`. Read and write it, beside the computed match (SD-13)? | To decide: `../../tasks/hierarchy-editing/` |
 | A cylinder among core-vis's shapes | linked-archi-meta; nothing here waits for it |

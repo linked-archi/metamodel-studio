@@ -157,6 +157,26 @@
       for (const d of o.range) checkRef("taxonomy", o.id, d, `Target type of ${o.id}`, ["element"]);
     }
 
+    // ---- orders, the palette grouping and the diagram group order (SReq 4.4–4.5, SD-14)
+    const catIds = new Set(project.taxonomy.categories.map((c) => c.id));
+    const collections = [["paletteGrouping", "The palette grouping"], ["diagramGroupOrder", "The diagram group order"]]
+      .map(([key, what]) => [project.taxonomy[key] || { id: "", members: [] }, what]).filter(([c]) => (c.members || []).length);
+    const taxNames = new Set(core.idsInScope(project, "taxonomy").concat(collections.map(([c]) => c.id)));
+    for (const c of project.taxonomy.categories) {
+      if (!core.narrowerOrder(project, c.id).explicit) continue;
+      const name = core.orderName(c.id);
+      if (taxNames.has(name)) add("error", "taxonomy", c.id, `The order of ${c.id} is written as ${name}, which is also the id of something else in the taxonomy. Rename one of them.`);
+    }
+    for (const [coll, what] of collections) {
+      if (!core.LOCAL_NAME.test(coll.id || "")) add("error", "taxonomy", "", `${what}'s id "${coll.id}" is not a valid local name.`);
+      else if (core.idsInScope(project, "taxonomy").includes(coll.id)) add("error", "taxonomy", "", `${what} is written as ${coll.id}, which is also the id of a category or a proposal order.`);
+      for (const id of coll.members) if (!catIds.has(id)) add("error", "taxonomy", "", `${what} names "${id}", which is not a category.`);
+      const repeated = coll.members.filter((id, i) => coll.members.indexOf(id) !== i);
+      if (repeated.length) add("warning", "taxonomy", "", `${what} lists ${repeated[0]} more than once.`);
+      if (!m.assets.taxonomy) add("warning", "taxonomy", "", `${what} is written in the taxonomy document, which is not shipped: it will be left out.`);
+    }
+    if (collections.length === 2 && collections[0][0].id === collections[1][0].id) add("error", "taxonomy", "", `The palette grouping and the diagram group order are both written as ${collections[0][0].id}.`);
+
     // ---- viewpoints
     const vpIds = (list) => new Set(list.map((x) => x.id));
     const stakeholders = vpIds(project.stakeholders), concerns = vpIds(project.concerns), purposes = vpIds(project.purposes), vcats = vpIds(project.viewpointCategories);

@@ -29,13 +29,19 @@ Administration screens: `specs/studio/plan.md`, and platform decision PD-16 in
    published set keeps what the project model can hold; `specs/studio/tasks.md`, *Known limitations*, lists what it
    cannot hold yet.
 4. **The browser app needs no build.** Plain scripts and the vendored N3.js browser bundle; it runs from disk or
-   from any static host. Development tools (Vitest, the kernel package) are development dependencies only.
+   from any static host. Development tools (Vitest, the kernel package, Playwright) are development dependencies
+   only.
 5. **The engine has no DOM.** `core.js`, `generator.js`, `importer.js`, `lint.js` and `zip.js` run unchanged in
-   Node. Only `app.js` touches the page.
+   Node. Only the page's own scripts touch the page: `app.js`, and `tree.js` for its trees, ordered lists, menus
+   and drag and drop. What a move does to the project is the engine's (`core.js`), so the workspace's
+   Administration screens get the same moves through the engine package.
+6. **Every drag has a menu and a key.** Whatever can be done by dragging can be done from a row's menu and from
+   the keyboard (WCAG 2.2, 2.1.1 and 2.5.7).
 
 ## Code Conventions
 
-- **Modules** are UMD: `window.LAStudio.<name>` in the browser, CommonJS under Node. No other globals.
+- **Modules** are UMD: `window.LAStudio.<name>` in the browser, CommonJS under Node. No other globals. `tree.js` is
+  `window.LAStudio.ui`, the browser only.
 - **Ids** are local names, unique per namespace (`core.SCOPES`): concepts in `<base>onto#`, categories and
   proposal orders in `<base>tax#`, viewpoint items in `<base>viewpoints#`, own shapes in `<base>notation#`. Rename
   and delete through `core.renameRef` and `core.removeRef`, which update every reference in the scope.
@@ -52,14 +58,17 @@ Administration screens: `specs/studio/plan.md`, and platform decision PD-16 in
 
 - **App and engine:** JavaScript (ES2019+), no framework, no build; N3.js 2.13.12 for parsing.
 - **Tests:** `node:test` (no dependencies); Python with pyoxigraph and pyshacl; Vitest with `@linked-archi/kernel`
-  (development dependencies, Node 22+).
+  (development dependencies, Node 22+); Playwright for the page (a development dependency, with the installed
+  Chrome or Playwright's Chromium).
 
 ## File Structure
 
 ```
 index.html, styles.css    the page
 js/app.js                 the user interface
-js/core.js                project model, namespaces, scoped ids, rename and delete, notation vocabulary
+js/tree.js                its trees, ordered lists, menus and drag and drop
+js/core.js                project model, namespaces, scoped ids, rename and delete, notation vocabulary,
+                          and the moves, orders and relations the trees use
 js/generator.js           project -> Turtle documents
 js/importer.js            Turtle documents -> project
 js/lint.js                checks
@@ -71,6 +80,7 @@ fixtures/                 copies of published documents (core, ArchiMate 4.0)
 tests/studio.test.js      Node checks, no dependencies
 tests/test_metamodel_studio.py  RDF and SHACL checks with independent tooling
 tests/kernel/             what la-gram and the workspace read from generated sets, through the kernel
+tests/ui/                 the page in a browser: drags, menus and keys
 vendor/n3.min.js          N3.js browser bundle
 ```
 
@@ -82,8 +92,8 @@ vendor/n3.min.js          N3.js browser bundle
 
 ### Finishing a change
 
-1. **Tests.** `npm test` and `python3 -m unittest discover -s tests`. After `npm install`, `npm run test:kernel`.
-   A fixed bug gets a test that fails without the fix.
+1. **Tests.** `npm test` and `python3 -m unittest discover -s tests`. After `npm install`, `npm run test:kernel`,
+   and for a change to the page `npm run test:ui`. A fixed bug gets a test that fails without the fix.
 2. **Templates.** `npm run templates` when the importer, the generator, the project model or `fixtures/` changed.
    A test fails while the committed templates are stale.
 3. **`README.md`**: what the change does for a user.

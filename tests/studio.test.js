@@ -19,6 +19,7 @@ const SKOS = "http://www.w3.org/2004/02/skos/core#";
 const VANN = "http://purl.org/vocab/vann/";
 const ARCH = "https://meta.linked.archi/core#";
 const VIS = "https://meta.linked.archi/core-vis#";
+const ISO_THES = "http://purl.org/iso25964/skos-thes#";
 
 function quads(text) {
   return new N3.Parser({ format: "text/turtle" }).parse(text);
@@ -191,13 +192,13 @@ test("output of earlier studio versions still imports (SReq 7.3, SD-9)", () => {
   assert.deepEqual(p.proposalOrders.map((o) => [o.id, o.members]), [["RelationshipProposalOrder", ["Uses"]]]);
 });
 
-test("a format /1 project opens as /2 (SReq 10.3, SD-9)", () => {
+test("a format /1 project opens as /3 (SReq 10.3, SD-9)", () => {
   const p = core.normalize({
     format: "linked-archi-metamodel-studio/1",
     proposalOrder: ["Usage", "Deployment"],
     relationships: [{ id: "Usage", style: { line: "dashed", arrow: "open" } }, { id: "Deployment" }],
   });
-  assert.equal(p.format, "linked-archi-metamodel-studio/2");
+  assert.equal(p.format, "linked-archi-metamodel-studio/3");
   assert.ok(!("proposalOrder" in p));
   assert.deepEqual(p.proposalOrders.map((o) => [o.id, o.members, o.domain, o.range]), [["ProposalOrder", ["Usage", "Deployment"], [], []]]);
   assert.deepEqual(p.relationships[0].style, { line: "dashed", target: "open" });
@@ -222,6 +223,206 @@ test("checks catch unknown notation values, empty own shapes and wrong proposal 
 
 test("cloudplatform template passes every check", () => {
   assert.deepEqual(lint(templates.cloudplatform.project).filter((i) => i.level === "error"), []);
+});
+
+// ---------------------------------------------------------------- orders (SReq 4.4–4.5)
+
+/** The members of an RDF list, as IRIs. */
+function listOf(s, head) {
+  const out = [];
+  for (let cell = head; cell && cell.value !== RDF + "nil"; cell = s.getObjects(cell, RDF + "rest", null)[0]) out.push(s.getObjects(cell, RDF + "first", null)[0].value);
+  return out;
+}
+
+test("a category's own order is a thesaurus array under it; the manifest names the palette grouping and the diagram group order (SReq 4.4–4.5)", () => {
+  const p = project("cloudplatform");
+  const ns = core.namespaces(p);
+  const T = ns.cptax, C = ns.cp;
+  const tax = store(files(p).get("taxonomy").content);
+  const arrays = tax.getSubjects(RDF + "type", ISO_THES + "ThesaurusArray", null).map((x) => x.value);
+  assert.deepEqual(arrays, [T + "ComputeOrder"], "only the category with an order of its own");
+  assert.equal(tax.getObjects(T + "ComputeOrder", ISO_THES + "superOrdinate", null)[0].value, T + "Compute");
+  assert.deepEqual(listOf(tax, tax.getObjects(T + "ComputeOrder", SKOS + "memberList", null)[0]), ["Microservice", "Function", "Cluster"].map((x) => C + x));
+  assert.deepEqual(listOf(tax, tax.getObjects(T + "PaletteGrouping", SKOS + "memberList", null)[0]), [T + "Elements"]);
+  assert.deepEqual(listOf(tax, tax.getObjects(T + "DiagramGroupOrder", SKOS + "memberList", null)[0]), ["Integration", "Compute", "Data"].map((x) => T + x));
+  const manifest = store(files(p).get("manifest").content);
+  const mm = ns.cpmm + p.meta.name;
+  assert.equal(manifest.getObjects(mm, ARCH + "paletteGrouping", null)[0].value, T + "PaletteGrouping");
+  assert.equal(manifest.getObjects(mm, ARCH + "diagramGroupOrder", null)[0].value, T + "DiagramGroupOrder");
+});
+
+test("without an order of its own a category writes no array, and nothing names an empty collection", () => {
+  const p = project("cloudplatform");
+  assert.ok(core.clearOrder(p, "Compute"));
+  p.taxonomy.paletteGrouping.members = [];
+  p.taxonomy.diagramGroupOrder.members = ["Gone"];
+  const tax = files(p).get("taxonomy").content;
+  assert.doesNotMatch(tax, /ThesaurusArray|PaletteGrouping|DiagramGroupOrder/);
+  assert.doesNotMatch(files(p).get("manifest").content, /paletteGrouping|diagramGroupOrder/);
+  assert.match(lint(p).filter((i) => i.level === "error").map((i) => i.message).join("\n"), /The diagram group order names "Gone"/);
+});
+
+test("the published ArchiMate 4.0 keeps its orders, palette grouping and diagram group order (SReq 7.2, 9.4)", () => {
+  const p = project("archimate4");
+  const ordered = p.taxonomy.categories.filter((c) => core.narrowerOrder(p, c.id).explicit).map((c) => c.id);
+  assert.deepEqual(ordered.sort(), ["Aspect", "CommonDomain", "DependencyRelationship", "Domain", "DynamicRelationship", "Relationship", "StructuralRelationship"]);
+  assert.deepEqual(core.narrowerOrder(p, "Domain").categories.slice(0, 3), ["CommonDomain", "BusinessDomain", "ApplicationDomain"]);
+  assert.deepEqual(core.narrowerOrder(p, "StructuralRelationship").members, ["Composition", "Aggregation", "Assignment", "Realization"]);
+  assert.deepEqual(p.taxonomy.paletteGrouping.members, ["Domain", "Aspect"]);
+  assert.equal(p.taxonomy.diagramGroupOrder.members[0], "MotivationDomain");
+  // The published names come back.
+  const tax = store(files(p).get("taxonomy").content);
+  const T = core.namespaces(p).am4tax;
+  assert.equal(tax.getSubjects(RDF + "type", ISO_THES + "ThesaurusArray", null).length, 7);
+  assert.equal(tax.getObjects(T + "DomainOrder", SKOS + "prefLabel", null)[0].value, "Domains in Order");
+  assert.equal(tax.getObjects(T + "CommonDomainOrder", ISO_THES + "superOrdinate", null)[0].value, T + "CommonDomain");
+});
+
+test("renaming and deleting reach the orders and the collections", () => {
+  const p = project("cloudplatform");
+  core.renameRef(p, "Microservice", "Service", "concept");
+  p.elements.find((e) => e.id === "Microservice").id = "Service";
+  assert.deepEqual(p.taxonomy.categories.find((c) => c.id === "Compute").memberOrder, ["Service", "Function", "Cluster"]);
+  core.renameRef(p, "Compute", "Processing", "taxonomy");
+  p.taxonomy.categories.find((c) => c.id === "Compute").id = "Processing";
+  assert.deepEqual(p.taxonomy.diagramGroupOrder.members, ["Integration", "Processing", "Data"]);
+  core.removeRef(p, "Elements", "taxonomy.categories");
+  assert.deepEqual(p.taxonomy.paletteGrouping.members, []);
+  core.removeRef(p, "Cluster", "elements");
+  assert.deepEqual(p.taxonomy.categories.find((c) => c.id === "Processing").memberOrder, ["Service", "Function"]);
+});
+
+test("a format /2 project opens as /3 with no orders", () => {
+  const p = core.normalize({ format: "linked-archi-metamodel-studio/2", taxonomy: { label: "", categories: [{ id: "A", label: "A", parent: "" }] } });
+  assert.equal(p.format, core.FORMAT);
+  assert.deepEqual(p.taxonomy.categories[0], { id: "A", label: "A", definition: "", parent: "", categoryOrder: [], memberOrder: [], orderLabel: "" });
+  assert.deepEqual(p.taxonomy.paletteGrouping, { id: "PaletteGrouping", label: "", definition: "", members: [] });
+  assert.equal(p.taxonomy.diagramGroupOrder.id, "DiagramGroupOrder");
+});
+
+// ---------------------------------------------------------------- hierarchies and classification (SReq 11)
+
+test("a type with two parents has a path through each; moves keep the other parent and refuse cycles (SReq 11.1–11.2)", () => {
+  const p = project("archimate4");
+  assert.deepEqual(core.elementPaths(p, "ApplicationComponent").map((path) => path.join(">")), [
+    "arch:Element>StructureElement>ActiveStructureElement>InternalActiveStructureElement>ApplicationComponent",
+    "arch:Element>ApplicationDomainElement>ApplicationComponent",
+  ]);
+  assert.deepEqual(core.subtypes(p, "ApplicationDomainElement").sort(), ["ApplicationComponent", "ApplicationInterface", "DataObject"]);
+  // A move replaces the parent it names, in its place.
+  assert.ok(core.moveParent(p, "ApplicationComponent", "ApplicationDomainElement", "TechnologyDomainElement"));
+  assert.deepEqual(p.elements.find((e) => e.id === "ApplicationComponent").parents, ["InternalActiveStructureElement", "TechnologyDomainElement"]);
+  // Under itself or one of its subtypes: refused, nothing changes.
+  assert.equal(core.moveParent(p, "StructureElement", "arch:Element", "InternalActiveStructureElement"), false);
+  assert.equal(core.addParent(p, "ActiveStructureElement", "ApplicationComponent"), false);
+  assert.deepEqual(p.elements.find((e) => e.id === "StructureElement").parents, []);
+  assert.ok(core.addParent(p, "Device", "ApplicationDomainElement"));
+  assert.ok(core.removeParent(p, "Device", "ApplicationDomainElement"));
+  assert.equal(core.removeParent(p, "Device", "ApplicationDomainElement"), false);
+  // Moving to arch:Element takes the parent away.
+  assert.ok(core.moveParent(p, "Grouping", "CompositeElement", "arch:Element"));
+  assert.deepEqual(p.elements.find((e) => e.id === "Grouping").parents, []);
+  // An outside parent is a path's root.
+  const cp = project("cloudplatform");
+  assert.deepEqual(core.elementPaths(cp, "ApiGateway").map((path) => path[0]).sort(), ["am4:Node", "am4:TechnologyInterface"]);
+});
+
+test("a relationship type becomes a kind of another, never of its own subtype (SReq 11.2)", () => {
+  const p = project("archimate4");
+  assert.deepEqual(core.relationshipPath(p, "ReadAccess"), ["arch:QualifiedRelationship", "Access", "ReadAccess"]);
+  assert.equal(core.setRelationshipParent(p, "Access", "ReadAccess"), false);
+  assert.ok(core.setRelationshipParent(p, "Composition", ""));
+  assert.equal(p.relationships.find((r) => r.id === "Composition").parent, "");
+  p.relationships.push({ id: "Peek", parent: "", predicate: "", domain: [], range: [], categories: [] });
+  assert.ok(core.setRelationshipParent(p, "Peek", "Access"));
+  assert.equal(p.relationships.find((r) => r.id === "Peek").predicate, "accesses", "a subtype takes its parent's predicate");
+});
+
+test("categories move and keep an order; types are classified, regrouped and ordered (SReq 11.3, 11.5, 11.7)", () => {
+  const p = project("archimate4");
+  assert.equal(core.moveCategory(p, "Aspect", "StructureAspect"), false, "never under its own sub-category");
+  assert.ok(core.moveCategory(p, "EventAspect", "Aspect", "StructureAspect"));
+  assert.deepEqual(core.subcategories(p, "Aspect").slice(0, 2), ["EventAspect", "StructureAspect"]);
+  assert.ok(core.shift(p, "Domain", "categories", "BusinessDomain", -1));
+  assert.deepEqual(core.subcategories(p, "Domain").slice(0, 2), ["BusinessDomain", "CommonDomain"]);
+  // Members: a category with no order of its own lists them by label; a move makes one.
+  assert.equal(core.narrowerOrder(p, "BusinessDomain").explicit, false);
+  assert.deepEqual(core.categoryMembers(p, "BusinessDomain", false), ["BusinessActor", "BusinessInterface", "BusinessObject", "Product"]);
+  assert.ok(core.reorder(p, "BusinessDomain", "members", "Product", "BusinessActor"));
+  assert.equal(core.narrowerOrder(p, "BusinessDomain").explicit, true);
+  assert.equal(core.categoryMembers(p, "BusinessDomain", false)[0], "Product");
+  // Leaving a category takes a type out of its order too.
+  assert.ok(core.classify(p, "Product", "ApplicationDomain", "BusinessDomain"));
+  assert.ok(!p.taxonomy.categories.find((c) => c.id === "BusinessDomain").memberOrder.includes("Product"));
+  assert.equal(core.classify(p, "Product", "ApplicationDomain"), false, "already there");
+  // In the grid: from the Business Domain's branch to the Technology Domain's, keeping its aspect.
+  assert.ok(core.regroup(p, "BusinessActor", "BusinessDomain", "TechnologyDomain"));
+  assert.deepEqual(p.elements.find((e) => e.id === "BusinessActor").categories.sort(), ["InternalActiveStructure", "TechnologyDomain"]);
+  assert.ok(core.unclassify(p, "BusinessActor", "TechnologyDomain"));
+});
+
+test("viewpoints and their categories move, never under themselves (SReq 11.3)", () => {
+  const p = project("archimate4");
+  const [a, b] = p.viewpointCategories.filter((c) => !c.parent);
+  assert.ok(core.moveViewpointCategory(p, b.id, a.id));
+  assert.equal(core.moveViewpointCategory(p, a.id, b.id), false);
+  const v = p.viewpoints[0];
+  const from = v.categories[0];
+  assert.ok(core.moveViewpoint(p, v.id, from, b.id));
+  assert.ok(!v.categories.includes(from) && v.categories.includes(b.id));
+  assert.ok(core.moveViewpoint(p, v.id, b.id, from, true), "kept in both");
+  assert.ok(v.categories.includes(from) && v.categories.includes(b.id));
+});
+
+test("a category matches the abstract type whose subtypes are its members (SReq 11.6, SD-13)", () => {
+  const p = project("archimate4");
+  const matches = core.categoryMatches(p);
+  assert.equal([...matches.values()].filter((m) => m.exact).length, 16);
+  assert.deepEqual(matches.get("ApplicationDomain"), { type: "ApplicationDomainElement", exact: true, extra: [], missing: [] });
+  assert.deepEqual(matches.get("CommonDomain"), { type: "CommonDomainElement", exact: false, extra: ["Grouping", "Location"], missing: [] });
+  assert.deepEqual(core.typeMatches(p, "MotivationElement").map((m) => m.category).sort(), ["MotivationAspect", "MotivationDomain"]);
+  // Cloud Platform's Compute holds both workloads and the cluster: too far from Workload to be shown as its match.
+  assert.equal(core.categoryMatches(project("cloudplatform")).has("Compute"), false);
+});
+
+test("a change on one side of an exact match offers the same change on the other (SReq 11.6)", () => {
+  const p = project("archimate4");
+  let before = core.matchSnapshot(p);
+  core.moveParent(p, "BusinessActor", "BusinessDomainElement", "ApplicationDomainElement");
+  assert.deepEqual(core.matchFollowUps(p, before).map((f) => [f.action, f.category, f.ids.join()]).sort(), [
+    ["classify", "ApplicationDomain", "BusinessActor"],
+    ["unclassify", "BusinessDomain", "BusinessActor"],
+  ]);
+  for (const f of core.matchFollowUps(p, before)) core.applyFollowUp(p, f);
+  assert.deepEqual(p.elements.find((e) => e.id === "BusinessActor").categories.sort(), ["ApplicationDomain", "InternalActiveStructure"]);
+  // Classified in a sub-category: the most specific type is offered, not its ancestors as well.
+  before = core.matchSnapshot(p);
+  core.classify(p, "BusinessObject", "InternalBehavior");
+  assert.deepEqual(core.matchFollowUps(p, before).map((f) => [f.action, f.type, f.ids.join()]), [["addParent", "InternalBehaviorElement", "BusinessObject"]]);
+});
+
+test("the relations of a type: paths, rules, attributes, guidance, orders and viewpoints (SReq 11.4)", () => {
+  const p = project("cloudplatform");
+  const r = core.relationsOf(p, "Microservice");
+  assert.deepEqual(r.paths, [["am4:ApplicationComponent", "Workload", "Microservice"]]);
+  assert.deepEqual(r.categories, [{ id: "Compute", path: ["Elements", "Compute"] }]);
+  assert.deepEqual(r.rulesOut.map((x) => [x.rel, x.refs.length]), [["Deployment", 1], ["Usage", 4], ["Publication", 1]]);
+  // By label: "Microservice" before "Serverless Function".
+  assert.deepEqual(r.rulesIn.map((x) => [x.rel, x.refs.join()]), [["Usage", "Microservice,Function"], ["Exposure", "ApiGateway"]]);
+  assert.deepEqual(r.attributes, [{ id: "resilienceLevel", via: "Workload" }, { id: "replicas", via: null }]);
+  assert.deepEqual(r.guidance.filter((g) => g.rel === "Usage").map((g) => g.side), ["domain", "range"]);
+  assert.deepEqual(r.proposalOrders, [{ id: "WorkloadToResourceOrder", side: "domain", via: "Workload" }]);
+  assert.equal(r.viewpoints.length, 3);
+  const usage = core.relationsOf(p, "Usage");
+  assert.deepEqual(usage.subtypes, ["Publication"]);
+  assert.deepEqual(usage.proposalOrders.map((o) => [o.id, o.position]), [["ProposalOrder", 1], ["WorkloadToResourceOrder", 3]]);
+  assert.equal(usage.pairs, 7);
+});
+
+test("checks catch an order whose name is taken", () => {
+  const p = project("cloudplatform");
+  p.taxonomy.categories.push({ id: "ComputeOrder", label: "Clash", parent: "", categoryOrder: [], memberOrder: [], orderLabel: "" });
+  assert.match(lint(p).filter((i) => i.level === "error").map((i) => i.message).join("\n"), /The order of Compute is written as ComputeOrder/);
 });
 
 // ---------------------------------------------------------------- the rest

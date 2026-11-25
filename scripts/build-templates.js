@@ -80,13 +80,18 @@ function cloudPlatform() {
     label: "Cloud Platform Concept Scheme",
     categories: [
       { id: "Elements", label: "Elements", definition: "", parent: "" },
-      { id: "Compute", label: "Compute", definition: "Things that run code.", parent: "Elements" },
+      // Workloads before the cluster they run on: an order of its own (SReq 4.4), where la-gram would otherwise sort by name.
+      { id: "Compute", label: "Compute", definition: "Things that run code.", parent: "Elements", memberOrder: ["Microservice", "Function", "Cluster"] },
       { id: "Data", label: "Data", definition: "Things that hold state.", parent: "Elements" },
       { id: "Integration", label: "Integration", definition: "Things that connect workloads.", parent: "Elements" },
       { id: "Relationships", label: "Relationships", definition: "", parent: "" },
       { id: "Structural", label: "Structural", definition: "", parent: "Relationships" },
       { id: "Dependency", label: "Dependency", definition: "", parent: "Relationships" },
     ],
+    // A palette section for each kind of element; a diagram keeps the entry points on top and the data at the
+    // bottom (SReq 4.5).
+    paletteGrouping: { id: "PaletteGrouping", label: "", definition: "", members: ["Elements"] },
+    diagramGroupOrder: { id: "DiagramGroupOrder", label: "", definition: "", scopeNote: "", members: ["Integration", "Compute", "Data"] },
   };
   p.proposalOrders = [
     { id: "ProposalOrder", label: "", members: ["Usage", "Deployment", "Publication", "Exposure"], domain: [], range: [] },

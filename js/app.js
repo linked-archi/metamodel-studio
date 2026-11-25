@@ -3,15 +3,17 @@
  *
  * Plain DOM, no framework and no build: open index.html from disk or any static server.
  * State is one project object (see core.js). Text fields write into it as you type;
- * structural edits (add, delete, rename, pickers) re-render the page. Everything is kept
+ * structural edits (add, delete, rename, pickers, drags) re-render the page. Everything is kept
  * in this browser's localStorage between visits and can be saved as a .studio.json file.
+ * Trees, menus, ordered lists and drag and drop come from tree.js (SReq 11, SD-16).
  */
 (function () {
   "use strict";
 
-  const { core, generator, importer, lint: linter, zip, templates } = window.LAStudio;
+  const { core, generator, importer, lint: linter, zip, templates, ui: kit } = window.LAStudio;
   const STORE_KEY = "la-metamodel-studio:project";
   const THEME_KEY = "la-metamodel-studio:theme";
+  const VIEW_KEY = "la-metamodel-studio:view";
 
   // ------------------------------------------------------------------ state
 
@@ -19,12 +21,20 @@
   const ui = {
     tab: "overview",
     sel: {},           // tab -> selected id
+    selKey: {},        // tab -> the tree row chosen for it: an item with two parents has two rows (SD-12)
+    picked: {},        // tab -> Set of the row keys chosen together, with Ctrl, Cmd or Shift
+    anchor: {},        // tab -> the row a Shift-click range starts from
+    rows: {},          // tab -> the tree rows as last drawn
     filter: {},        // tab -> search text
     matrixRel: "",     // "" = all relationships
     matrixRowCat: "",
     matrixColCat: "",
     outFile: "",
+    taxMember: "",     // the member row chosen on the Taxonomy page
+    grid: { rows: "", cols: "" },
+    focusAfter: null,  // { scope, key, id }: the row to focus after the next render, when a move changes its key
   };
+  const view = loadView();
   const history = { undo: [], redo: [] };
   let pendingSnapshot = null;
   let issues = [];
@@ -45,6 +55,15 @@
     } catch (e) { return null; }
   }
 
+  /** What this viewer keeps between visits: folded rows, the taxonomy's view, whether relations show. Not project data. */
+  function loadView() {
+    const fallback = { collapsed: {}, showMembers: true, relations: true, taxView: "tree" };
+    try { return Object.assign(fallback, JSON.parse(localStorage.getItem(VIEW_KEY) || "{}")); } catch (e) { return fallback; }
+  }
+  function saveView() {
+    try { localStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch (e) { /* storage unavailable: keep working */ }
+  }
+
   let saveTimer = null;
   function saveNow() {
     clearTimeout(saveTimer); saveTimer = null;
@@ -57,13 +76,38 @@
   window.addEventListener("pagehide", () => { if (saveTimer) saveNow(); });
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden" && saveTimer) saveNow(); });
 
-  /** Record an undo point, run a structural change, re-render. */
+  /** Run a structural change and re-render; record an undo point when it changed the project. */
   function mutate(fn, opts) {
-    history.undo.push(JSON.stringify(project));
-    if (history.undo.length > 100) history.undo.shift();
-    history.redo = [];
+    const before = JSON.stringify(project);
     fn(project);
+    if (JSON.stringify(project) !== before) {
+      history.undo.push(before);
+      if (history.undo.length > 100) history.undo.shift();
+      history.redo = [];
+    }
     changed(opts && opts.render === false ? false : true);
+  }
+
+  /**
+   * A change to element types' parents or categories: made as mutate() does, then the other side of each category
+   * that matched an abstract type exactly is offered the same change (SReq 11.6).
+   */
+  function change(fn, opts) {
+    const before = core.matchSnapshot(project);
+    mutate(fn, opts);
+    const ups = core.matchFollowUps(project, before);
+    if (!ups.length) return;
+    const names = (ids) => (ids.length === 1 ? labelOf(ids[0]) : `${ids.length} types`);
+    const say = {
+      classify: (f) => `Classify ${names(f.ids)} in ${catLabel(f.category)}`,
+      unclassify: (f) => `Take ${names(f.ids)} out of ${catLabel(f.category)}`,
+      addParent: (f) => `Make ${names(f.ids)} a kind of ${labelOf(f.type)}`,
+      removeParent: (f) => `Stop ${names(f.ids)} specializing ${labelOf(f.type)}`,
+    };
+    const first = ups[0];
+    const actions = ups.slice(0, 3).map((f) => ({ label: say[f.action](f), run: () => mutate(() => core.applyFollowUp(project, f)) }));
+    if (ups.length > 1) actions.push({ label: "All of these", run: () => mutate(() => ups.forEach((f) => core.applyFollowUp(project, f))) });
+    toast(`${catLabel(first.category)} holds the subtypes of ${labelOf(first.type)}${ups.length > 1 ? ", and other categories match too" : ""}.`, actions);
   }
 
   /** Text inputs: one undo point per focus, model updated on every keystroke. */
@@ -155,6 +199,8 @@
    */
   function chips(get, set, options, opts) {
     opts = opts || {};
+    // Changes go through `opts.mutate`: change() for parents and categories, which offers the matching change (SReq 11.6).
+    const run = opts.mutate || mutate;
     const box = h("div", { class: "chips" });
     const listId = "dl" + (++listCounter);
     const byValue = new Map(options.map((o) => [o.value, o]));
@@ -162,7 +208,7 @@
       const o = byValue.get(v);
       box.appendChild(h("span", { class: "chip" + (core.isCurie(v) ? " ext" : ""), title: v },
         o && o.label && o.label !== v ? [o.label, " ", h("code", {}, v)] : v,
-        h("button", { class: "x", type: "button", title: "Remove", "aria-label": `Remove ${v}`, onclick: () => mutate(() => set(get().filter((x) => x !== v))) }, "×")));
+        h("button", { class: "x", type: "button", title: "Remove", "aria-label": `Remove ${v}`, onclick: () => run(() => set(get().filter((x) => x !== v))) }, "×")));
     }
     const input = h("input", { list: listId, placeholder: opts.placeholder || "Add…", "aria-label": opts.label || "Add value" });
     const dl = h("datalist", { id: listId }, options.filter((o) => !get().includes(o.value)).map((o) => h("option", { value: o.value }, o.label && o.label !== o.value ? o.label : null)));
@@ -172,7 +218,7 @@
       let value = byValue.has(raw) ? raw : (options.find((o) => (o.label || "").toLowerCase() === raw.toLowerCase()) || {}).value;
       if (!value && opts.free && opts.free.test(raw)) value = raw;
       if (!value) { toast(`"${raw}" is not one of the choices${opts.free ? " (or a prefix:Name reference)" : ""}.`); return; }
-      if (!get().includes(value)) mutate(() => set(get().concat([value])));
+      if (!get().includes(value)) run(() => set(get().concat([value])));
       input.value = "";
     };
     input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); accept(); } });
@@ -182,11 +228,17 @@
     return box;
   }
 
-  function toast(msg) {
+  /** A short message; with actions, buttons for the changes it offers (SReq 11.6), shown for longer. */
+  function toast(msg, actions) {
     const t = $("toast");
-    t.textContent = msg; t.hidden = false;
+    t.textContent = "";
+    t.appendChild(h("span", {}, msg));
+    if (actions && actions.length) {
+      t.appendChild(h("span", { class: "toast-actions" }, actions.map((a) => h("button", { class: "btn small", type: "button", onclick: () => { t.hidden = true; a.run(); } }, a.label))));
+    }
+    t.hidden = false;
     clearTimeout(toast.timer);
-    toast.timer = setTimeout(() => { t.hidden = true; }, 3200);
+    toast.timer = setTimeout(() => { t.hidden = true; }, actions && actions.length ? 15000 : 3200);
   }
 
   function download(name, content, type) {
@@ -274,16 +326,43 @@
     if (id !== undefined) ui.sel[tab] = id;
     render();
     $("main").scrollTop = 0;
+    const sel = $("main").querySelector(".tv-row.sel");
+    if (sel) sel.scrollIntoView({ block: "nearest" });
   }
 
+  /**
+   * Draw the page again. Lists keep where they were scrolled, and the row that had the keyboard focus keeps it, or
+   * the row a move took it to (ui.focusAfter), or its item's first row (SReq 11.3).
+   */
   function render() {
+    kit.closeMenu(false);
     closePopover();
     renderSidebar();
     renderTitle();
     const main = $("main");
+    const scrolls = Array.from(main.querySelectorAll("[data-scroll]")).map((el) => [el.dataset.scroll, el.scrollTop]);
+    const top = main.scrollTop;
+    const active = document.activeElement;
+    const scope = active && active.closest ? active.closest("[data-scope]") : null;
+    const focus = ui.focusAfter || (scope && active.dataset.key ? { scope: scope.dataset.scope, key: active.dataset.key, id: active.dataset.id } : null);
+    ui.focusAfter = null;
     main.textContent = "";
-    const view = VIEWS[ui.tab] || VIEWS.overview;
-    append(main, [view()]);
+    append(main, [(VIEWS[ui.tab] || VIEWS.overview)()]);
+    main.scrollTop = top;
+    for (const [name, at] of scrolls) {
+      const el = main.querySelector(`[data-scroll="${CSS.escape(name)}"]`);
+      if (el) el.scrollTop = at;
+    }
+    if (focus) {
+      const box = main.querySelector(`[data-scope="${CSS.escape(focus.scope)}"]`);
+      const el = box && (box.querySelector(`[data-key="${CSS.escape(focus.key)}"]`) || (focus.id ? box.querySelector(`[data-id="${CSS.escape(focus.id)}"]`) : null));
+      if (el) {
+        for (const other of box.querySelectorAll("[tabindex='0'][data-key]")) other.tabIndex = -1;
+        el.tabIndex = 0;
+        el.focus({ preventScroll: true });
+        el.scrollIntoView({ block: "nearest" });
+      }
+    }
   }
 
   function pageHead(title, text, ...actions) {
@@ -396,9 +475,16 @@
   function masterDetail(tab, opts) {
     const sel = ui.sel[tab];
     const search = h("input", { type: "search", placeholder: "Filter…", value: ui.filter[tab] || "", "aria-label": "Filter list" });
-    const body = h("div", { class: "list-body" });
+    const body = h("div", { class: "list-body", "data-scroll": "list-" + tab });
     const fill = () => {
       body.textContent = "";
+      if (opts.tree) {
+        // A hierarchy is a tree (SReq 11.1); a filter keeps the rows that match and the rows above them.
+        const filter = (ui.filter[tab] || "").toLowerCase();
+        const t = opts.tree(filter);
+        body.appendChild(t.rows.length ? kit.tree(t).node : h("div", { class: "empty" }, filter ? "Nothing matches." : opts.emptyText || "Nothing here yet."));
+        return;
+      }
       const rows = opts.rows((ui.filter[tab] || "").toLowerCase());
       if (!rows.length) body.appendChild(h("div", { class: "empty" }, opts.emptyText || "Nothing here yet."));
       for (const r of rows) {
@@ -435,37 +521,456 @@
     }), "Renaming updates every reference.");
   }
 
+  function deleteItem(tab, listName, item, what) {
+    if (!confirm(`Delete ${what} "${item.id}" and every reference to it?`)) return;
+    mutate(() => { core.removeRef(project, item.id, listName); ui.sel[tab] = null; });
+  }
+
   function deleteButton(tab, listName, item, what) {
-    return h("button", { class: "btn danger small", onclick: () => {
-      if (!confirm(`Delete ${what} "${item.id}" and every reference to it?`)) return;
-      mutate(() => { core.removeRef(project, item.id, listName); ui.sel[tab] = null; });
-    } }, "Delete");
+    return h("button", { class: "btn danger small", onclick: () => deleteItem(tab, listName, item, what) }, "Delete");
+  }
+
+  // ------------------------------------------------------------------ trees: rows, choosing, moving (SReq 11, SD-12)
+
+  const collapsedSet = (tab) => new Set(view.collapsed[tab] || []);
+  /** Fold or unfold a row; this viewer keeps it between visits. */
+  function setOpen(tab, key, open) {
+    const set = collapsedSet(tab);
+    if (open) set.delete(key); else set.add(key);
+    // Rows that moved leave keys behind: keep the latest few hundred.
+    view.collapsed[tab] = [...set].slice(-400);
+    saveView();
+  }
+  /** Unfold every row of `id`, so that what was just put under it shows. */
+  function unfoldItem(tab, id) {
+    view.collapsed[tab] = (view.collapsed[tab] || []).filter((k) => k !== id && !k.endsWith("/" + id));
+    saveView();
+  }
+  const pickedSet = (tab) => ui.picked[tab] || new Set();
+
+  /** The selected item's rows: the one chosen, or its first, is selected; its other places are highlighted (SReq 11.1). */
+  function markSelection(tab, rows, selectedId, isItem) {
+    const picked = pickedSet(tab);
+    const mine = rows.filter((r) => r.id === selectedId && isItem(r));
+    const chosen = mine.find((r) => r.key === ui.selKey[tab]) || mine[0];
+    for (const r of mine) { if (r === chosen) r.selected = true; else r.also = true; }
+    for (const r of rows) if (picked.has(r.key)) r.picked = true;
+    ui.rows[tab] = rows;
+    return rows;
+  }
+
+  /** A row clicked, or chosen with Enter or Space: Ctrl, Cmd or Space adds it to the rows chosen together, Shift a range of them. */
+  function chooseRow(tab, row, mods, open) {
+    const rows = ui.rows[tab] || [];
+    if (mods.toggle && row.drag) {
+      const picked = new Set(pickedSet(tab));
+      if (picked.has(row.key)) picked.delete(row.key); else picked.add(row.key);
+      ui.picked[tab] = picked;
+      ui.anchor[tab] = row.key;
+      render();
+      return;
+    }
+    if (mods.range && row.drag && ui.anchor[tab]) {
+      const keys = rows.map((r) => r.key);
+      const a = keys.indexOf(ui.anchor[tab]);
+      const b = keys.indexOf(row.key);
+      if (a >= 0 && b >= 0) {
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        ui.picked[tab] = new Set(rows.slice(lo, hi + 1).filter((r) => r.group === row.group).map((r) => r.key));
+        render();
+        return;
+      }
+    }
+    ui.picked[tab] = new Set();
+    ui.anchor[tab] = row.key;
+    open(row);
+  }
+
+  /** What dragging `row` carries: it, or all the rows of its kind chosen with it. */
+  function dragOf(tab, row, kind, item) {
+    const noun = { category: "categories", vpcat: "categories", viewpoint: "viewpoints" }[kind] || "types";
+    return () => {
+      const picked = pickedSet(tab);
+      const together = (ui.rows[tab] || []).filter((r) => picked.has(r.key) && r.group === row.group);
+      const rows = picked.has(row.key) && together.length > 1 ? together : [row];
+      return { kind, items: rows.map(item), label: rows.length === 1 ? row.label : `${rows.length} ${noun}` };
+    };
+  }
+
+  /** Where a menu's picker opens: at the row it was opened from. */
+  function rowAnchor(scope, key) {
+    const box = document.querySelector(`[data-scope="${CSS.escape(scope)}"]`);
+    return (box && box.querySelector(`[data-key="${CSS.escape(key)}"]`)) || { x: Math.max(8, innerWidth / 2 - 160), y: 120 };
+  }
+
+  const catLabel = (id) => { const c = project.taxonomy.categories.find((x) => x.id === id); return c ? c.label || core.humanize(c.id) : id; };
+  const catPathLabel = (id) => core.categoryPath(project, id).map(catLabel).join(" › ");
+  const byLabelItem = (a, b) => (a.label || a.id).localeCompare(b.label || b.id);
+  function categoriesOf(ref) {
+    const item = project.elements.find((e) => e.id === ref) || project.relationships.find((r) => r.id === ref);
+    return item ? item.categories : [];
+  }
+
+  /** Element types as a tree for a picker, each under its first parent; those `ok` refuses are shown but cannot be picked. */
+  function elementChoices(ok, why) {
+    const local = new Set(project.elements.map((e) => e.id));
+    const out = [];
+    const seen = new Set();
+    const add = (value, label, depth) => { const allowed = ok(value); out.push({ value, label, depth, disabled: !allowed, note: allowed ? "" : why(value) }); };
+    const walk = (parent, depth) => {
+      for (const e of project.elements.filter((x) => x.parents[0] === parent).sort(byLabelItem)) {
+        if (seen.has(e.id)) continue;
+        seen.add(e.id);
+        add(e.id, (e.label || core.humanize(e.id)) + (e.abstract ? " (abstract)" : ""), depth);
+        walk(e.id, depth + 1);
+      }
+    };
+    for (const e of project.elements.filter((x) => !local.has(x.parents[0])).sort(byLabelItem)) {
+      if (seen.has(e.id)) continue;
+      seen.add(e.id);
+      add(e.id, (e.label || core.humanize(e.id)) + (e.abstract ? " (abstract)" : ""), 0);
+      walk(e.id, 1);
+    }
+    // Types of other languages: those the project names as parents, and those it declares.
+    const outside = new Set(project.elements.flatMap((e) => e.parents).filter((p) => !local.has(p)));
+    for (const x of project.externalConcepts) if ((x.kind || "element") === "element" && x.ref) outside.add(x.ref);
+    for (const ref of [...outside].sort()) add(ref, `${labelOf(ref)} (${ref})`, 0);
+    return out;
+  }
+
+  /** Categories as a tree for a picker. */
+  function categoryChoices(ok, why) {
+    const out = [];
+    const walk = (parent, depth, trail) => {
+      for (const id of core.subcategories(project, parent)) {
+        if (trail.has(id)) continue;
+        const allowed = ok(id);
+        out.push({ value: id, label: catLabel(id), depth, disabled: !allowed, note: allowed ? "" : why(id) });
+        walk(id, depth + 1, new Set(trail).add(id));
+      }
+    };
+    walk("", 0, new Set());
+    return out;
+  }
+
+  /** Classify a type in a category chosen from a list; given `from`, it leaves that category (SReq 11.3). */
+  function pickCategoryFor(ref, at, from) {
+    if (!project.taxonomy.categories.length) { toast("There are no taxonomy categories yet."); return; }
+    const mine = categoriesOf(ref);
+    kit.picker(at, from ? `Move ${labelOf(ref)} to` : `Classify ${labelOf(ref)} in`, categoryChoices((c) => !mine.includes(c), () => "already there"),
+      (c) => change(() => core.classify(project, ref, c, from)));
+  }
+
+  // ------------------------------------------------------------------ relations (SReq 11.4)
+
+  /** A link to a concept's page; a type the project does not define is named, not linked. */
+  function refLink(ref) {
+    const hit = core.conceptIndex(project).get(ref);
+    if (!hit || !hit.local) return h("span", { class: "muted", title: ref }, labelOf(ref) === ref ? ref : `${labelOf(ref)}`);
+    return h("a", { href: "#", title: `${project.meta.prefix}:${ref}`, onclick: (ev) => { ev.preventDefault(); go(hit.kind === "relationship" ? "relationships" : "elements", ref); } }, labelOf(ref));
+  }
+  function catLink(id) {
+    return h("a", { href: "#", title: `${project.meta.prefix}tax:${id}`, onclick: (ev) => { ev.preventDefault(); ui.taxMember = ""; view.taxView = "tree"; go("taxonomy", id); } }, catPathLabel(id));
+  }
+  const via = (ref) => (ref ? h("span", { class: "muted" }, ` via ${labelOf(ref)}`) : null);
+
+  /**
+   * How a category and an abstract type match (SReq 11.6): exactly, or closely with what differs, each difference
+   * with a fix. `from` is the page it is shown on: the category's or the type's.
+   */
+  function matchView(m, from) {
+    const names = (ids) => ids.map(labelOf).join(", ");
+    const head = m.exact
+      ? (from === "category" ? ["Its element types are exactly the subtypes of ", refLink(m.type), "."] : ["Its subtypes are exactly the element types of ", catLink(m.category), "."])
+      : (from === "category" ? ["Its element types are nearly the subtypes of ", refLink(m.type), "."] : ["Its subtypes are nearly the element types of ", catLink(m.category), "."]);
+    return h("div", { class: "match " + (m.exact ? "exact" : "close") }, head,
+      m.extra.length ? h("div", { class: "match-diff" }, `In ${catLabel(m.category)} but no subtype of ${labelOf(m.type)}: ${names(m.extra)}. `,
+        h("button", { class: "btn small", type: "button", onclick: () => mutate(() => m.extra.forEach((x) => core.addParent(project, x, m.type))) }, m.extra.length === 1 ? "Make it a subtype" : "Make them subtypes"), " ",
+        h("button", { class: "btn small", type: "button", onclick: () => mutate(() => m.extra.forEach((x) => core.regroup(project, x, m.category, null))) }, m.extra.length === 1 ? "Take it out" : "Take them out")) : null,
+      m.missing.length ? h("div", { class: "match-diff" }, `Subtypes of ${labelOf(m.type)} not in ${catLabel(m.category)}: ${names(m.missing)}. `,
+        h("button", { class: "btn small", type: "button", onclick: () => mutate(() => m.missing.forEach((x) => core.classify(project, x, m.category))) }, m.missing.length === 1 ? "Classify it here" : "Classify them here")) : null);
+  }
+
+  /** The rules of each relationship type a type is the source or the target of, folded. */
+  function rulesBlock(list) {
+    if (!list.length) return null;
+    return h("div", { class: "rel-list" }, list.map(({ rel, refs }) => {
+      const r = project.relationships.find((x) => x.id === rel);
+      return h("details", { class: "rel-rule" },
+        h("summary", {}, h("b", { class: "mono" }, r ? relLetter(r) : ""), " ", labelOf(rel), h("span", { class: "muted" }, ` · ${refs.length}`)),
+        h("div", { class: "rel-refs" }, refs.map((x) => refLink(x))));
+    }));
+  }
+
+  /** What a type is related to (SReq 11.4): a diagram, and the same in lists for keyboards and screen readers. */
+  function relationsPanel(ref) {
+    const r = core.relationsOf(project, ref);
+    if (!r) return null;
+    const box = h("details", { class: "relations", open: view.relations !== false ? true : null });
+    box.addEventListener("toggle", () => { view.relations = box.open; saveView(); });
+    const block = (title, content) => h("section", { class: "rel-block" }, h("h4", {}, title),
+      content && (!Array.isArray(content) || content.length) ? content : h("p", { class: "muted" }, "None"));
+    const links = (items) => (items.length ? h("div", { class: "rel-list" }, items) : null);
+    const isRel = r.kind === "relationship";
+    const blocks = [
+      block(r.paths.length > 1 ? `Paths to the root (${r.paths.length})` : "Path to the root", r.paths.map((path) => h("div", { class: "crumbs" },
+        path.map((x, i) => [i ? h("span", { class: "sep", "aria-hidden": "true" }, "›") : null, x === ref ? h("b", {}, labelOf(x)) : refLink(x)])))),
+      block(`Subtypes${r.subtypes.length ? ` (${r.subtypes.length}${r.descendants > r.subtypes.length ? `, ${r.descendants} in all` : ""})` : ""}`, links(r.subtypes.map(refLink))),
+      block("Categories", links(r.categories.map((c) => catLink(c.id)))),
+    ];
+    if (!isRel && r.abstract) blocks.push(block("Categories with its subtypes", r.matches.map((m) => matchView(m, "type"))));
+    if (isRel) {
+      blocks.push(block(`Sources (${r.sources.length})`, links(r.sources.map(refLink))));
+      blocks.push(block(`Targets (${r.targets.length})`, links(r.targets.map(refLink))));
+    } else {
+      blocks.push(block("Rules as source", rulesBlock(r.rulesOut)));
+      blocks.push(block("Rules as target", rulesBlock(r.rulesIn)));
+      // Grouped by side and by the ancestor they come through: its own first.
+      const guidance = new Map();
+      for (const g of r.guidance) {
+        const k = `${g.via ? 1 : 0}|${g.side}|${g.via || ""}`;
+        if (!guidance.has(k)) guidance.set(k, { side: g.side, via: g.via, rels: [] });
+        guidance.get(k).rels.push(g.rel);
+      }
+      blocks.push(block("Domain and range guidance", links([...guidance.keys()].sort().map((k) => {
+        const g = guidance.get(k);
+        return h("div", {}, g.side === "domain" ? "Source of " : "Target of ", g.rels.map((rel, i) => [i ? ", " : "", refLink(rel)]), via(g.via));
+      }))));
+    }
+    blocks.push(block("Attributes", links(r.attributes.map((a) => h("div", {}, h("a", { href: "#", onclick: (ev) => { ev.preventDefault(); go("attributes", a.id); } }, labelOf(a.id)), via(a.via))))));
+    blocks.push(block("Proposal orders", links(r.proposalOrders.map((o) => {
+      const order = project.proposalOrders.find((x) => x.id === o.id) || {};
+      const name = order.label || core.humanize(o.id);
+      return h("div", {}, name, h("span", { class: "muted" }, o.side === "member" ? `: place ${o.position} of ${o.of}` : o.side === "domain" ? ": its sources" : ": its targets"), via(o.via));
+    }))));
+    blocks.push(block("Viewpoints", links(r.viewpoints.map((id) => {
+      const v = project.viewpoints.find((x) => x.id === id);
+      return h("a", { href: "#", onclick: (ev) => { ev.preventDefault(); go("viewpoints", id); } }, (v && v.label) || core.humanize(id));
+    }))));
+    box.appendChild(h("summary", {}, "Relations"));
+    box.appendChild(relationsDiagram(r));
+    box.appendChild(h("div", { class: "rel-grid" }, blocks));
+    box.appendChild(h("p", { class: "small" }, h("a", { href: "#", onclick: (ev) => { ev.preventDefault(); ui.matrixRel = isRel ? ref : ""; ui.matrixRowCat = ""; go("rules"); } }, "Open the rules matrix")));
+    return box;
+  }
+
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  function svgEl(tag, attrs, parent) {
+    const el = document.createElementNS(SVG_NS, tag);
+    for (const [k, v] of Object.entries(attrs || {})) el.setAttribute(k, v);
+    if (parent) parent.appendChild(el);
+    return el;
+  }
+
+  /** The item with its parents above, its subtypes below and its categories beside it (SReq 11.4). Click a box to open it. */
+  function relationsDiagram(r) {
+    const W = 680, NH = 26, GAP = 34, PAD = 6, MAX = 7;
+    const isRel = r.kind === "relationship";
+    const short = (s) => (s.length > 22 ? s.slice(0, 21) + "…" : s);
+    const width = (s) => Math.round(Math.min(160, Math.max(60, s.length * 6.4 + 22)));
+    const ups = r.parents.length ? r.parents : [isRel ? core.RELATIONSHIP_ROOT : core.ELEMENT_ROOT];
+    const cats = r.categories.map((c) => c.id);
+    const area = cats.length ? Math.round(W * 0.66) : W;
+    const yTop = PAD, yMid = PAD + NH + GAP, yBot = yMid + NH + GAP;
+    const row = (items, y) => {
+      const shown = items.slice(0, MAX).map((ref) => ({ ref, text: short(labelOf(ref)) }));
+      if (items.length > MAX) shown.push({ ref: null, text: `+${items.length - MAX} more` });
+      const ws = shown.map((n) => width(n.text));
+      let x = Math.max(PAD, (area - ws.reduce((a, b) => a + b, 0) - 10 * (ws.length - 1)) / 2);
+      return shown.map((n, i) => { const node = Object.assign(n, { x, y, w: ws[i] }); x += ws[i] + 10; return node; });
+    };
+    const top = row(ups, yTop);
+    const self = row([r.ref], yMid)[0];
+    const bottom = row(r.subtypes, yBot);
+    const catH = cats.length * NH + Math.max(0, cats.length - 1) * 8;
+    const catTop = Math.max(PAD, yMid + NH / 2 - catH / 2);
+    const H = Math.max(bottom.length ? yBot + NH + PAD : yMid + NH + PAD, catTop + catH + PAD);
+    const parentsText = ups.map(labelOf).join(" and ");
+    const svg = svgEl("svg", {
+      viewBox: `0 0 ${W} ${H}`, class: "rel-diagram", role: "img",
+      "aria-label": `${labelOf(r.ref)}: a kind of ${parentsText}; ${r.subtypes.length} subtype(s); in ${cats.length} categor${cats.length === 1 ? "y" : "ies"}.`,
+    });
+    const marker = svgEl("marker", { id: "rel-tri", viewBox: "0 0 10 10", refX: "10", refY: "5", markerWidth: "9", markerHeight: "9", orient: "auto-start-reverse" }, svgEl("defs", {}, svg));
+    svgEl("path", { d: "M0,0 L10,5 L0,10 Z", class: "tri" }, marker);
+    const line = (x1, y1, x2, y2, cls) => svgEl("line", { x1, y1, x2, y2, class: "edge " + (cls || ""), "marker-end": cls ? null : "url(#rel-tri)" }, svg);
+    // A subtype points at its parent with a hollow triangle, as a specialization is drawn.
+    for (const p of top) line(self.x + self.w / 2, yMid, p.x + p.w / 2, yTop + NH);
+    for (const c of bottom) line(c.x + c.w / 2, yBot, self.x + self.w / 2, yMid + NH);
+    const catNodes = cats.map((id, i) => ({ cat: id, text: short(catLabel(id)), x: area + 22, y: catTop + i * (NH + 8), w: Math.min(W - area - 22 - PAD, width(short(catLabel(id)))) }));
+    for (const c of catNodes) {
+      const l = line(self.x + self.w, yMid + NH / 2, c.x, c.y + NH / 2, "cat");
+      l.removeAttribute("marker-end");
+    }
+    const node = (n, cls, open) => {
+      const g = svgEl("g", { class: "node " + cls + (open ? " link" : "") }, svg);
+      svgEl("rect", { x: n.x, y: n.y, width: n.w, height: NH, rx: cls.includes("category") ? 13 : 5 }, g);
+      const t = svgEl("text", { x: n.x + n.w / 2, y: n.y + NH / 2 + 4, "text-anchor": "middle" }, g);
+      t.textContent = n.text;
+      if (n.ref || n.cat) svgEl("title", {}, g).textContent = n.cat ? catPathLabel(n.cat) : n.ref;
+      if (open) g.addEventListener("click", open);
+    };
+    const opener = (ref) => {
+      const hit = ref ? core.conceptIndex(project).get(ref) : null;
+      return hit && hit.local && ref !== r.ref ? () => go(hit.kind === "relationship" ? "relationships" : "elements", ref) : null;
+    };
+    const kind = (ref) => { const hit = core.conceptIndex(project).get(ref); return !ref ? "more" : hit && hit.local ? "" : "outside"; };
+    for (const n of top) node(n, kind(n.ref), opener(n.ref));
+    node(self, "self", null);
+    for (const n of bottom) node(n, kind(n.ref), opener(n.ref));
+    for (const n of catNodes) node(n, "category", () => { ui.taxMember = ""; view.taxView = "tree"; go("taxonomy", n.cat); });
+    return svg;
   }
 
   // ------------------------------------------------------------------ elements
 
-  function elementRows(filter) {
-    const rows = [];
-    const byParent = new Map();
-    const local = new Set(project.elements.map((e) => e.id));
+  /** The element hierarchy (SReq 11.1): each type under each of its parents, a parent of another language as an anchor. */
+  function elementTree(filter) {
+    const collapsed = collapsedSet("elements");
+    const byId = new Map(project.elements.map((e) => [e.id, e]));
+    const kids = new Map();
     for (const e of project.elements) {
-      const lp = e.parents.filter((p) => local.has(p));
-      const key = lp.length ? lp[0] : "";
-      if (!byParent.has(key)) byParent.set(key, []);
-      byParent.get(key).push(e);
+      for (const p of e.parents.length ? e.parents : [core.ELEMENT_ROOT]) {
+        if (!kids.has(p)) kids.set(p, []);
+        kids.get(p).push(e.id);
+      }
     }
-    const walk = (key, depth, seen) => {
-      for (const e of (byParent.get(key) || []).sort((a, b) => (a.label || a.id).localeCompare(b.label || b.id))) {
-        if (seen.has(e.id)) continue;
-        seen.add(e.id);
-        if (matches(filter, e.id, e.label, ...e.altLabels)) {
-          rows.push({ id: e.id, label: e.label || core.humanize(e.id), abstract: e.abstract, depth: filter ? 0 : depth, swatch: e.abstract ? null : (e.notation && e.notation.fill) || "transparent", tag: e.abstract ? "abstract" : null });
-        }
-        walk(e.id, depth + 1, seen);
+    const sorted = (ids) => ids.slice().sort((a, b) => labelOf(a).localeCompare(labelOf(b)) || a.localeCompare(b));
+    const memo = new Map();
+    const shows = (id, trail) => {
+      if (!filter) return true;
+      if (memo.has(id)) return memo.get(id);
+      if (trail.has(id)) return false;
+      const e = byId.get(id);
+      const hit = (!!e && matches(filter, id, e.label, ...e.altLabels)) || (kids.get(id) || []).some((k) => shows(k, new Set(trail).add(id)));
+      memo.set(id, hit);
+      return hit;
+    };
+    const rows = [];
+    const P = project.meta.prefix;
+    const walk = (parent, parentKey, depth, trail) => {
+      for (const id of sorted(kids.get(parent) || [])) {
+        if (trail.has(id) || !shows(id, new Set())) continue;
+        const e = byId.get(id);
+        const key = `${parentKey}/${id}`;
+        const below = kids.get(id) || [];
+        const expanded = !!filter || !collapsed.has(key);
+        const others = e.parents.filter((p) => p !== parent);
+        const row = {
+          key, parentKey, depth, id, from: parent, group: "element", kind: e.abstract ? "abstract" : "element",
+          label: e.label || core.humanize(id), italic: e.abstract, title: `${P}:${id}`,
+          swatch: e.abstract ? undefined : (e.notation && e.notation.fill) || "transparent",
+          tag: e.abstract ? "abstract" : null,
+          badges: others.length ? h("span", { class: "pill tiny", title: `Also under ${others.map(labelOf).join(", ")}` }, `+${others.length} parent${others.length > 1 ? "s" : ""}`) : null,
+          expandable: below.length > 0, expanded,
+        };
+        row.drag = dragOf("elements", row, "element", (x) => ({ id: x.id, from: x.from }));
+        row.drop = elementDrop(row);
+        rows.push(row);
+        if (below.length && expanded) walk(id, key, depth + 1, new Set(trail).add(id));
       }
     };
-    walk("", 0, new Set());
-    return rows;
+    const anchor = (ref, label, tag, kind) => {
+      const below = kids.get(ref) || [];
+      if (kind !== "root" && !below.length) return;
+      if (filter && !below.some((k) => shows(k, new Set()))) return;
+      const expanded = !!filter || !collapsed.has(ref);
+      const row = { key: ref, parentKey: null, depth: 0, id: ref, group: "anchor", kind, label, tag, title: ref, expandable: below.length > 0, expanded };
+      row.drop = elementDrop(row);
+      rows.push(row);
+      if (expanded) walk(ref, ref, 1, new Set());
+    };
+    anchor(core.ELEMENT_ROOT, "Element", "core", "root");
+    // A parent of another language: its name, and its prefix as the tag (the title holds the whole reference).
+    for (const ref of sorted([...kids.keys()].filter((p) => p !== core.ELEMENT_ROOT && !byId.has(p)))) {
+      anchor(ref, labelOf(ref) === ref ? core.humanize(ref.slice(ref.indexOf(":") + 1)) : labelOf(ref), core.isCurie(ref) ? ref.slice(0, ref.indexOf(":")) : "outside", "anchor");
+    }
+    markSelection("elements", rows, ui.sel.elements, (r) => r.group === "element");
+    return {
+      name: "elements", label: "Element types", rows,
+      onSelect: (r, mods) => chooseRow("elements", r, mods, (x) => { if (x.group === "element") { ui.selKey.elements = x.key; go("elements", x.id); } }),
+      onToggle: (r, open) => { setOpen("elements", r.key, open); render(); },
+      menu: elementMenu,
+      onMove: elementKeyMove,
+    };
+  }
+
+  /** A drop on an element tree row (SReq 11.2–11.3): move under it; with Alt, add it as a parent; on Element, leave the parent. */
+  function elementDrop(row) {
+    return {
+      unfold: row.expandable && !row.expanded ? () => { setOpen("elements", row.key, true); render(); } : null,
+      accept: (p, where, alt) => {
+        if (p.kind !== "element") return null;
+        const to = row.id;
+        if (to === core.ELEMENT_ROOT) {
+          const leaving = p.items.filter((it) => it.from !== core.ELEMENT_ROOT);
+          if (!leaving.length) return { ok: false, hint: "Already at the top" };
+          return { ok: true, hint: leaving.length === 1 ? `Stop specializing ${labelOf(leaving[0].from)}` : "Leave the parents they are under", run: () => change(() => leaving.forEach((it) => core.removeParent(project, it.id, it.from))) };
+        }
+        const refused = p.items.find((it) => !core.canSpecialize(project, it.id, to));
+        if (refused) return { ok: false, hint: refused.id === to ? "Not under itself" : `${labelOf(to)} is one of its subtypes` };
+        if (alt) {
+          const adding = p.items.filter((it) => !core.parentsOf(project, it.id).includes(to));
+          if (!adding.length) return { ok: false, hint: `Already a kind of ${labelOf(to)}` };
+          return { ok: true, hint: `Also a kind of ${labelOf(to)}`, run: () => change(() => adding.forEach((it) => core.addParent(project, it.id, to))) };
+        }
+        const moving = p.items.filter((it) => it.from !== to);
+        if (!moving.length) return { ok: false, hint: "Already here" };
+        return { ok: true, hint: `Move under ${labelOf(to)}. With Alt: add it as a parent`, run: () => change(() => moving.forEach((it) => core.moveParent(project, it.id, it.from, to))) };
+      },
+    };
+  }
+
+  function elementMenu(row) {
+    if (row.group === "anchor") {
+      return [
+        { label: row.kind === "root" ? "New element type" : "New subtype", run: () => addElement(false, row.id) },
+        { label: row.kind === "root" ? "New abstract type" : "New abstract subtype", run: () => addElement(true, row.id) },
+      ];
+    }
+    const e = project.elements.find((x) => x.id === row.id);
+    if (!e) return [];
+    const at = () => rowAnchor("elements", row.key);
+    return [
+      { label: "Open", run: () => { ui.selKey.elements = row.key; go("elements", row.id); } },
+      "-",
+      { label: "New subtype", run: () => addElement(false, row.id) },
+      { label: "Move under…", run: () => pickElementParent(row, false, at()) },
+      { label: "Add a parent…", run: () => pickElementParent(row, true, at()) },
+      row.from !== core.ELEMENT_ROOT ? { label: `Stop specializing ${labelOf(row.from)}`, run: () => change(() => core.removeParent(project, row.id, row.from)) } : null,
+      { label: "Classify in…", run: () => pickCategoryFor(row.id, at()) },
+      "-",
+      { label: "Duplicate", run: () => duplicateElement(e) },
+      { label: "Delete…", danger: true, run: () => deleteItem("elements", "elements", e, "element") },
+    ];
+  }
+
+  /** "Move under…" and "Add a parent…": a parent picked from the hierarchy; itself and its subtypes cannot be. */
+  function pickElementParent(row, add, at) {
+    const parents = core.parentsOf(project, row.id);
+    const choices = elementChoices((x) => core.canSpecialize(project, row.id, x) && !parents.includes(x),
+      (x) => (x === row.id ? "itself" : parents.includes(x) ? "already a parent" : "one of its subtypes"));
+    kit.picker(at, add ? `Add a parent to ${row.label}` : `Move ${row.label} under`, choices,
+      (to) => change(() => (add ? core.addParent(project, row.id, to) : core.moveParent(project, row.id, row.from, to))));
+  }
+
+  /** Alt+Right puts a type under the one above it; Alt+Left takes it out to its parent's parent. */
+  function elementKeyMove(row, dir) {
+    if (row.group !== "element") return;
+    const rows = ui.rows.elements || [];
+    if (dir === "up" || dir === "down") { toast("Subtypes are listed by name: they have no order to change."); return; }
+    if (dir === "right") {
+      const sib = rows.slice(0, rows.indexOf(row)).reverse().find((r) => r.parentKey === row.parentKey);
+      if (!sib || sib.group !== "element") { toast("There is no type above it to go under."); return; }
+      if (!core.canSpecialize(project, row.id, sib.id)) { toast(`${row.label} cannot go under ${sib.label}.`); return; }
+      setOpen("elements", sib.key, true);
+      ui.focusAfter = { scope: "elements", key: `${sib.key}/${row.id}`, id: row.id };
+      change(() => core.moveParent(project, row.id, row.from, sib.id));
+      return;
+    }
+    const parentRow = rows.find((r) => r.key === row.parentKey);
+    if (!parentRow || parentRow.group !== "element") { toast("It is at the top already."); return; }
+    ui.focusAfter = { scope: "elements", key: `${parentRow.parentKey}/${row.id}`, id: row.id };
+    change(() => core.moveParent(project, row.id, row.from, parentRow.from));
   }
 
   function viewElements() {
@@ -474,41 +979,45 @@
       h("button", { class: "btn small", onclick: () => addElement(true) }, "+ Abstract"),
     ];
     return h("div", {},
-      pageHead("Element types", "Each becomes an owl:Class under arch:Element. Abstract types (arch:isAbstractClass) organize the hierarchy and can be used in domain/range guidance; concrete types appear in the palette, rules and viewpoints."),
-      masterDetail("elements", { rows: elementRows, tools, detail: elementDetail, emptyText: "No element types yet." }));
+      pageHead("Element types", "Each becomes an owl:Class under arch:Element. A type with two parents appears under both. Drag a type onto another to move it there, or hold Alt to add a parent instead; each row's ⋯ menu does the same, and Alt+Right and Alt+Left move the focused row in and out."),
+      masterDetail("elements", { tree: elementTree, tools, detail: elementDetail, emptyText: "No element types yet." }));
   }
 
-  function addElement(abstract) {
+  /** A new type, under `parent` (arch:Element: none) or, when none is given, under the selected abstract type. */
+  function addElement(abstract, parent) {
     const id = uniqueId(abstract ? "NewAbstractElement" : "NewElement", "concept");
     const sel = project.elements.find((e) => e.id === ui.sel.elements);
-    mutate(() => {
-      project.elements.push({ id, label: core.humanize(id), altLabels: [], definition: "", scopeNote: "", example: "", changeNote: "", parents: sel && sel.abstract ? [sel.id] : [], abstract, categories: [], notation: abstract ? {} : { fill: "#e8f1fb", stroke: "#333333", shape: "rectangle" } });
+    const parents = parent !== undefined ? (parent === core.ELEMENT_ROOT ? [] : [parent]) : sel && sel.abstract ? [sel.id] : [];
+    if (parents[0]) unfoldItem("elements", parents[0]);
+    ui.tab = "elements";
+    change(() => {
+      project.elements.push({ id, label: core.humanize(id), altLabels: [], definition: "", scopeNote: "", example: "", changeNote: "", parents, abstract, categories: [], notation: abstract ? {} : { fill: "#e8f1fb", stroke: "#333333", shape: "rectangle" } });
       ui.sel.elements = id;
+      ui.selKey.elements = "";
     });
   }
 
   function elementDetail(id) {
     const e = project.elements.find((x) => x.id === id);
     if (!e) return null;
-    const usedRules = Object.entries(project.rules).reduce((n, [, l]) => n + l.filter((k) => core.splitPair(k).includes(e.id)).length, 0);
-    const usedViews = project.viewpoints.filter((v) => v.concepts.includes(e.id)).length;
     const parentOpts = elementOptions(true).filter((o) => o.value !== e.id && !core.descendants(project, e.id).has(o.value));
     const n = e.notation || (e.notation = {});
-    const outgoing = project.relationships.map((r) => {
-      const targets = (project.rules[r.id] || []).map(core.splitPair).filter(([s]) => s === e.id).map(([, t]) => labelOf(t));
-      return targets.length ? h("div", { class: "small" }, h("b", {}, r.label || r.id), " → ", targets.join(", ")) : null;
-    }).filter(Boolean);
+    const setCategories = (list) => {
+      for (const c of e.categories.filter((x) => !list.includes(x))) core.unclassify(project, e.id, c);
+      for (const c of list) core.classify(project, e.id, c);
+    };
     return h("div", { class: "card" },
       h("div", { class: "detail-head" }, h("h2", {}, e.label || core.humanize(e.id)), h("span", { class: "pill" }, `${project.meta.prefix}:${e.id}`),
         e.abstract ? h("span", { class: "pill" }, "abstract") : null,
         h("button", { class: "btn small", onclick: () => duplicateElement(e) }, "Duplicate"), deleteButton("elements", "elements", e, "element")),
       inlineIssues("elements", e.id),
+      relationsPanel(e.id),
       h("div", { class: "grid2" },
         idField("elements", "concept", e, "Element"),
         field("Label (skos:prefLabel)", textInput(() => e.label, (v) => { e.label = v; })),
-        field("Specializes (rdfs:subClassOf)", chips(() => e.parents, (v) => { e.parents = v; }, parentOpts, { free: curieRe, placeholder: "Add parent type…" }), "Empty means arch:Element. External types (am4:…) are allowed.", "span2"),
+        field("Specializes (rdfs:subClassOf)", chips(() => e.parents, (v) => { e.parents = v; }, parentOpts, { free: curieRe, placeholder: "Add parent type…", mutate: change }), "Empty means arch:Element. External types (am4:…) are allowed.", "span2"),
         field("Alternative labels (skos:altLabel)", chips(() => e.altLabels, (v) => { e.altLabels = v; }, [], { free: /.+/, placeholder: "Type and press Enter…" })),
-        field("Taxonomy categories", chips(() => e.categories, (v) => { e.categories = v; }, catOptions(), { placeholder: "Add category…" })),
+        field("Taxonomy categories", chips(() => e.categories, setCategories, catOptions(), { placeholder: "Add category…", mutate: change })),
         h("div", { class: "field span2" }, checkbox("Abstract — classification only, not placed in models (arch:isAbstractClass)", () => e.abstract, (v) => { e.abstract = v; })),
         field("Definition (skos:definition)", textArea(() => e.definition, (v) => { e.definition = v; }, 3), null, "span2"),
         field("Scope note", textArea(() => e.scopeNote, (v) => { e.scopeNote = v; }, 2)),
@@ -520,12 +1029,7 @@
           field("Fill", colorInput(() => n.fill, (v) => { n.fill = v; })),
           field("Line", colorInput(() => n.stroke, (v) => { n.stroke = v; })),
           field("Shape", shapeSelect(() => n.shape, (v) => { n.shape = v; })),
-          h("div", { style: { marginLeft: "12px" } }, shapeSvg(n, 90, 54, e.label || e.id)))),
-      h("div", { style: { marginTop: "14px" } },
-        h("h3", {}, "Usage"),
-        h("p", { class: "small muted" }, `Appears in ${usedRules} relationship rule(s) and ${usedViews} viewpoint(s).`,
-          " ", h("a", { href: "#", onclick: (ev) => { ev.preventDefault(); ui.matrixRowCat = ""; go("rules"); } }, "Open the rules matrix")),
-        outgoing.length ? outgoing : null));
+          h("div", { style: { marginLeft: "12px" } }, shapeSvg(n, 90, 54, e.label || e.id)))));
   }
 
   function duplicateElement(e) {
@@ -614,24 +1118,156 @@
 
   // ------------------------------------------------------------------ relationships
 
-  function viewRelationships() {
-    const tools = [h("button", { class: "btn small", onclick: addRelationship }, "+ Relationship")];
-    return h("div", {},
-      pageHead("Relationship types", "Each becomes three terms, as in the published languages: a QualifiedRelationship subclass (the relationship as a resource), its direct predicate (arch:unqualifiedForm) for traversal, and a qualified predicate to navigate to the resource."),
-      masterDetail("relationships", {
-        rows: (f) => project.relationships.filter((r) => matches(f, r.id, r.label, r.predicate, r.notation)).map((r) => ({
-          id: r.id, label: r.label || core.humanize(r.id), depth: r.parent && project.relationships.some((x) => x.id === r.parent) ? 1 : 0,
-          tag: [r.notation, r.predicate].filter(Boolean).join(" · "),
-        })),
-        tools, detail: relationshipDetail, emptyText: "No relationship types yet.",
-      }));
+  /** The relationship types as a tree by what each is a kind of (SReq 11.1), a parent of another language as an anchor. */
+  function relationshipTree(filter) {
+    const collapsed = collapsedSet("relationships");
+    const byId = new Map(project.relationships.map((r) => [r.id, r]));
+    const kids = new Map();
+    for (const r of project.relationships) {
+      const p = r.parent || core.RELATIONSHIP_ROOT;
+      if (!kids.has(p)) kids.set(p, []);
+      kids.get(p).push(r.id);
+    }
+    const sorted = (ids) => ids.slice().sort((a, b) => labelOf(a).localeCompare(labelOf(b)) || a.localeCompare(b));
+    const memo = new Map();
+    const shows = (id, trail) => {
+      if (!filter) return true;
+      if (memo.has(id)) return memo.get(id);
+      if (trail.has(id)) return false;
+      const r = byId.get(id);
+      const hit = (!!r && matches(filter, id, r.label, r.predicate, r.notation)) || (kids.get(id) || []).some((k) => shows(k, new Set(trail).add(id)));
+      memo.set(id, hit);
+      return hit;
+    };
+    const rows = [];
+    const P = project.meta.prefix;
+    const walk = (parent, parentKey, depth, trail) => {
+      for (const id of sorted(kids.get(parent) || [])) {
+        if (trail.has(id) || !shows(id, new Set())) continue;
+        const r = byId.get(id);
+        const key = `${parentKey}/${id}`;
+        const below = kids.get(id) || [];
+        const expanded = !!filter || !collapsed.has(key);
+        const row = {
+          key, parentKey, depth, id, from: parent, group: "relationship", kind: "relationship", icon: "↗",
+          label: r.label || core.humanize(id), title: `${P}:${id}`, tag: [r.notation, r.predicate].filter(Boolean).join(" · "),
+          expandable: below.length > 0, expanded,
+        };
+        row.drag = dragOf("relationships", row, "relationship", (x) => ({ id: x.id, from: x.from }));
+        row.drop = relationshipDrop(row);
+        rows.push(row);
+        if (below.length && expanded) walk(id, key, depth + 1, new Set(trail).add(id));
+      }
+    };
+    const anchor = (ref, label, tag, kind) => {
+      const below = kids.get(ref) || [];
+      if (kind !== "root" && !below.length) return;
+      if (filter && !below.some((k) => shows(k, new Set()))) return;
+      const expanded = !!filter || !collapsed.has(ref);
+      const row = { key: ref, parentKey: null, depth: 0, id: ref, group: "anchor", kind, label, tag, title: ref, expandable: below.length > 0, expanded };
+      row.drop = relationshipDrop(row);
+      rows.push(row);
+      if (expanded) walk(ref, ref, 1, new Set());
+    };
+    anchor(core.RELATIONSHIP_ROOT, "Qualified relationship", "core", "root");
+    for (const ref of sorted([...kids.keys()].filter((p) => p !== core.RELATIONSHIP_ROOT && !byId.has(p)))) {
+      anchor(ref, labelOf(ref) === ref && core.isCurie(ref) ? core.humanize(ref.slice(ref.indexOf(":") + 1)) : labelOf(ref), core.isCurie(ref) ? ref.slice(0, ref.indexOf(":")) : "outside", "anchor");
+    }
+    markSelection("relationships", rows, ui.sel.relationships, (r) => r.group === "relationship");
+    return {
+      name: "relationships", label: "Relationship types", rows,
+      onSelect: (r, mods) => chooseRow("relationships", r, mods, (x) => { if (x.group === "relationship") { ui.selKey.relationships = x.key; go("relationships", x.id); } }),
+      onToggle: (r, open) => { setOpen("relationships", r.key, open); render(); },
+      menu: relationshipMenu,
+      onMove: relationshipKeyMove,
+    };
   }
 
-  function addRelationship() {
+  /** A drop on a relationship row makes the dragged types kinds of it; on the root, kinds of no other. Never of their own kinds. */
+  function relationshipDrop(row) {
+    return {
+      unfold: row.expandable && !row.expanded ? () => { setOpen("relationships", row.key, true); render(); } : null,
+      accept: (p) => {
+        if (p.kind !== "relationship") return null;
+        const to = row.id === core.RELATIONSHIP_ROOT ? "" : row.id;
+        const moving = p.items.filter((it) => (it.from === core.RELATIONSHIP_ROOT ? "" : it.from) !== to);
+        if (!moving.length) return { ok: false, hint: "Already here" };
+        const refused = moving.find((it) => to && (it.id === to || core.relationshipDescendants(project, it.id).has(to)));
+        if (refused) return { ok: false, hint: refused.id === to ? "Not a kind of itself" : `${labelOf(to)} is one of its kinds` };
+        return { ok: true, hint: to ? `A kind of ${labelOf(to)}` : "A kind of no other relationship type", run: () => mutate(() => moving.forEach((it) => core.setRelationshipParent(project, it.id, to))) };
+      },
+    };
+  }
+
+  function relationshipMenu(row) {
+    if (row.group === "anchor") return [{ label: row.kind === "root" ? "New relationship type" : "New kind of it", run: () => addRelationship(row.kind === "root" ? "" : row.id) }];
+    const r = project.relationships.find((x) => x.id === row.id);
+    if (!r) return [];
+    const at = () => rowAnchor("relationships", row.key);
+    return [
+      { label: "Open", run: () => { ui.selKey.relationships = row.key; go("relationships", row.id); } },
+      "-",
+      { label: "New kind of it", run: () => addRelationship(row.id) },
+      { label: "Move under…", run: () => pickRelationshipParent(row, at()) },
+      r.parent ? { label: "Make it a kind of no other", run: () => mutate(() => core.setRelationshipParent(project, row.id, "")) } : null,
+      { label: "Classify in…", run: () => pickCategoryFor(row.id, at()) },
+      "-",
+      { label: "Delete…", danger: true, run: () => deleteItem("relationships", "relationships", r, "relationship") },
+    ];
+  }
+
+  function pickRelationshipParent(row, at) {
+    const below = core.relationshipDescendants(project, row.id);
+    const r = project.relationships.find((x) => x.id === row.id);
+    const out = [];
+    const walk = (parent, depth) => {
+      for (const x of project.relationships.filter((y) => (y.parent || "") === parent).sort(byLabelItem)) {
+        const ok = !below.has(x.id) && x.id !== r.parent;
+        out.push({ value: x.id, label: x.label || core.humanize(x.id), depth, disabled: !ok, note: ok ? "" : x.id === r.parent ? "already its parent" : "itself or one of its kinds" });
+        walk(x.id, depth + 1);
+      }
+    };
+    walk("", 0);
+    kit.picker(at, `Make ${row.label} a kind of`, out, (to) => mutate(() => core.setRelationshipParent(project, row.id, to)));
+  }
+
+  /** Alt+Right makes a type a kind of the one above it; Alt+Left a kind of its parent's parent. */
+  function relationshipKeyMove(row, dir) {
+    if (row.group !== "relationship") return;
+    const rows = ui.rows.relationships || [];
+    if (dir === "up" || dir === "down") { toast("Relationship types are listed by name: they have no order to change here."); return; }
+    if (dir === "right") {
+      const sib = rows.slice(0, rows.indexOf(row)).reverse().find((r) => r.parentKey === row.parentKey);
+      if (!sib || sib.group !== "relationship") { toast("There is no relationship type above it to go under."); return; }
+      if (core.relationshipDescendants(project, row.id).has(sib.id)) { toast(`${row.label} cannot go under ${sib.label}.`); return; }
+      setOpen("relationships", sib.key, true);
+      ui.focusAfter = { scope: "relationships", key: `${sib.key}/${row.id}`, id: row.id };
+      mutate(() => core.setRelationshipParent(project, row.id, sib.id));
+      return;
+    }
+    const parentRow = rows.find((r) => r.key === row.parentKey);
+    if (!parentRow || parentRow.group !== "relationship") { toast("It is at the top already."); return; }
+    ui.focusAfter = { scope: "relationships", key: `${parentRow.parentKey}/${row.id}`, id: row.id };
+    mutate(() => core.setRelationshipParent(project, row.id, parentRow.from));
+  }
+
+  function viewRelationships() {
+    const tools = [h("button", { class: "btn small", onclick: () => addRelationship() }, "+ Relationship")];
+    return h("div", {},
+      pageHead("Relationship types", "Each becomes three terms, as in the published languages: a QualifiedRelationship subclass (the relationship as a resource), its direct predicate (arch:unqualifiedForm) for traversal, and a qualified predicate to navigate to the resource. Drag a type onto another to make it a kind of it."),
+      masterDetail("relationships", { tree: relationshipTree, tools, detail: relationshipDetail, emptyText: "No relationship types yet." }));
+  }
+
+  /** A new relationship type; a kind of `parent` keeps its predicate and line (SReq 2.2). */
+  function addRelationship(parent) {
     const id = uniqueId("NewRelationship", "concept");
+    const p = parent ? project.relationships.find((x) => x.id === parent) : null;
+    if (parent) unfoldItem("relationships", parent);
+    ui.tab = "relationships";
     mutate(() => {
-      project.relationships.push({ id, label: core.humanize(id), predicate: "relatesTo", predicateLabel: "", predicateDefinition: "", notation: "", parent: "", definition: "", scopeNote: "", changeNote: "", domain: [], range: [], categories: [], style: { line: "solid", source: "none", target: "open" } });
+      project.relationships.push({ id, label: core.humanize(id), predicate: p ? p.predicate : "relatesTo", predicateLabel: "", predicateDefinition: "", notation: "", parent: parent || "", definition: "", scopeNote: "", changeNote: "", domain: [], range: [], categories: [], style: p ? Object.assign({}, p.style) : { line: "solid", source: "none", target: "open" } });
       ui.sel.relationships = id;
+      ui.selKey.relationships = "";
     });
   }
 
@@ -642,24 +1278,30 @@
     const pred = r.predicate || core.suggestPredicate(r.id);
     const s = r.style || (r.style = {});
     const ruleCount = (project.rules[r.id] || []).length;
+    const kinds = core.relationshipDescendants(project, r.id);
     const parentOpts = [{ value: "", label: "— none (arch:QualifiedRelationship) —" }].concat(
-      project.relationships.filter((x) => x.id !== r.id).map((x) => ({ value: x.id, label: x.label || x.id })));
+      project.relationships.filter((x) => !kinds.has(x.id)).map((x) => ({ value: x.id, label: x.label || x.id })));
+    const setCategories = (list) => {
+      for (const c of r.categories.filter((x) => !list.includes(x))) core.unclassify(project, r.id, c);
+      for (const c of list) core.classify(project, r.id, c);
+    };
     return h("div", { class: "card" },
       h("div", { class: "detail-head" }, h("h2", {}, r.label || core.humanize(r.id)),
         r.notation ? h("span", { class: "pill accent mono" }, r.notation) : null,
         deleteButton("relationships", "relationships", r, "relationship")),
       inlineIssues("relationships", r.id),
+      relationsPanel(r.id),
       h("div", { class: "grid3" },
         idField("relationships", "concept", r, "Class"),
         field("Label", textInput(() => r.label, (v) => { r.label = v; })),
         field("Notation letter (skos:notation)", textInput(() => r.notation, (v) => { r.notation = v.trim(); }, { class: "mono", maxlength: "4" }), "Used in the rules matrix"),
         field("Direct predicate (arch:unqualifiedForm)", textInput(() => r.predicate, (v) => { r.predicate = v.trim(); }, { class: "mono" }), `${P}:${pred}`),
         field("Predicate label", textInput(() => r.predicateLabel, (v) => { r.predicateLabel = v; }), "e.g. Serves"),
-        field("Specializes", select(parentOpts, () => r.parent, (v) => { r.parent = v; if (v) { const p = project.relationships.find((x) => x.id === v); if (p && !r.predicate) r.predicate = p.predicate; } }),
+        field("Specializes", select(parentOpts, () => r.parent, (v) => { core.setRelationshipParent(project, r.id, v); }),
           "A subtype keeping the parent's predicate declares no predicate of its own (like ReadAccess → accesses)"),
         field("Domain guidance (arch:domainIncludes)", chips(() => r.domain, (v) => { r.domain = v; }, elementOptions(true), { free: curieRe, placeholder: "Source types…" }), "Guidance, not validation — empty means any element", "span3"),
         field("Range guidance (arch:rangeIncludes)", chips(() => r.range, (v) => { r.range = v; }, elementOptions(true), { free: curieRe, placeholder: "Target types…" }), null, "span3"),
-        field("Taxonomy categories", chips(() => r.categories, (v) => { r.categories = v; }, catOptions()), null, "span3"),
+        field("Taxonomy categories", chips(() => r.categories, setCategories, catOptions()), null, "span3"),
         field("Definition", textArea(() => r.definition, (v) => { r.definition = v; }, 3), null, "span3"),
         field("Predicate definition", textArea(() => r.predicateDefinition, (v) => { r.predicateDefinition = v; }, 2), "Defaults to the definition", "span3"),
         field("Scope note", textArea(() => r.scopeNote, (v) => { r.scopeNote = v; }, 2), null, "span2"),
@@ -904,38 +1546,354 @@
     if (popEl) { popEl.remove(); popEl = null; document.removeEventListener("mousedown", outside); }
   }
 
-  // ------------------------------------------------------------------ taxonomy
+  // ------------------------------------------------------------------ taxonomy (SReq 4, 11.3, 11.5–11.7)
 
   function viewTaxonomy() {
-    const tax = project.taxonomy;
-    const tree = (parent) => {
-      const kids = tax.categories.filter((c) => (c.parent || "") === parent);
-      if (!kids.length) return null;
-      return h("ul", { class: "tree" }, kids.map((c) => {
-        const members = project.elements.filter((e) => e.categories.includes(c.id)).map((e) => e.label || e.id)
-          .concat(project.relationships.filter((r) => r.categories.includes(c.id)).map((r) => r.label || r.id));
-        return h("li", {},
-          h("div", { class: "tree-row" },
-            textInput(() => c.label, (v) => { c.label = v; }, { "aria-label": "Category label" }),
-            h("code", { class: "muted" }, c.id),
-            h("span", { class: "small muted", title: members.join(", ") }, members.length ? `${members.length} member(s)` : ""),
-            h("button", { class: "btn small ghost", title: "Add sub-category", onclick: () => addCategory(c.id) }, "+"),
-            h("button", { class: "btn small ghost", title: "Edit", onclick: () => go("taxonomy", c.id) }, "✎"),
-            h("button", { class: "btn small ghost", title: "Delete", onclick: () => { if (confirm(`Delete category ${c.id}?`)) mutate(() => core.removeRef(project, c.id, "taxonomy.categories")); } }, "×")),
-          tree(c.id));
-      }));
-    };
-    const sel = tax.categories.find((c) => c.id === ui.sel.taxonomy);
+    const grid = view.taxView === "grid";
+    const switcher = h("div", { class: "seg", role: "group", "aria-label": "Show the taxonomy as" },
+      [["tree", "Tree"], ["grid", "Grid"]].map(([v, label]) => h("button", {
+        class: "btn small" + ((v === "grid") === grid ? " primary" : ""), type: "button", "aria-pressed": String((v === "grid") === grid),
+        onclick: () => { view.taxView = v; saveView(); render(); },
+      }, label)));
     return h("div", {},
-      pageHead("Taxonomy", "The SKOS concept scheme that classifies the concepts (arch:conceptClassification) — the groups a modelling tool's palette shows. Assign members here or on each element and relationship."),
+      pageHead("Taxonomy", "The SKOS concept scheme that classifies the concepts (arch:conceptClassification): the groups a modelling tool's palette shows. Drag types into categories and categories into one another; hold Alt to add a type to a category without taking it out of the one it was in. Every row's ⋯ menu does the same.", switcher),
+      grid ? taxonomyGrid() : taxonomyBoard());
+  }
+
+  function taxonomyBoard() {
+    const tax = project.taxonomy;
+    const t = taxonomyTree();
+    const sel = tax.categories.find((c) => c.id === ui.sel.taxonomy);
+    const member = ui.taxMember && (project.elements.some((e) => e.id === ui.taxMember) || project.relationships.some((r) => r.id === ui.taxMember)) ? ui.taxMember : "";
+    const showMembers = h("input", { type: "checkbox" });
+    showMembers.checked = view.showMembers !== false;
+    showMembers.addEventListener("change", () => { view.showMembers = showMembers.checked; saveView(); render(); });
+    return h("div", { class: "grid2 tax-board" },
+      h("div", { class: "card" },
+        field("Scheme label", textInput(() => tax.label, (v) => { tax.label = v; }, { placeholder: `${project.meta.title} Concept Scheme` })),
+        h("div", { class: "row tax-tools" },
+          h("button", { class: "btn small", onclick: () => addCategory("") }, "+ Top-level category"),
+          h("span", { class: "spacer" }),
+          h("label", { class: "check" }, showMembers, "Show members")),
+        h("div", { class: "tax-tree", "data-scroll": "tax-tree" }, kit.tree(t).node)),
+      h("div", {},
+        member ? memberDetail(member) : sel ? categoryDetail(sel) : h("div", { class: "card empty" }, "Choose a category or a member on the left."),
+        typesCard(),
+        groupingCard(),
+        proposalOrdersCard()));
+  }
+
+  /** The categories, each with its sub-categories and its members in their order (SReq 4.4, 11.1). */
+  function taxonomyTree() {
+    const tax = project.taxonomy;
+    const collapsed = collapsedSet("taxonomy");
+    const showMembers = view.showMembers !== false;
+    const matched = core.categoryMatches(project);
+    const P = project.meta.prefix;
+    const rows = [];
+    const root = { key: "scheme", parentKey: null, depth: 0, id: "", group: "scheme", kind: "root", label: tax.label || `${project.meta.title} Concept Scheme`, tag: "scheme", expandable: tax.categories.length > 0, expanded: !collapsed.has("scheme") };
+    root.drop = categoryDrop(root);
+    rows.push(root);
+    const walk = (parent, parentKey, depth, trail) => {
+      for (const id of core.subcategories(project, parent)) {
+        if (trail.has(id)) continue;
+        const c = tax.categories.find((x) => x.id === id);
+        const o = core.narrowerOrder(project, id);
+        const members = showMembers ? o.members : [];
+        const key = `${parentKey}/${id}`;
+        const m = matched.get(id);
+        const row = {
+          key, parentKey, depth, id, parent, group: "category", kind: "category", label: c.label || core.humanize(id), title: `${P}tax:${id}`,
+          tag: String(core.categoryMembers(project, id, true).length),
+          badges: [
+            m ? h("span", { class: "pill tiny match " + (m.exact ? "exact" : "close"), title: m.exact ? `Its element types are the subtypes of ${labelOf(m.type)}` : `Its element types are nearly the subtypes of ${labelOf(m.type)}` }, `${m.exact ? "=" : "≈"} ${labelOf(m.type)}`) : null,
+            o.explicit ? h("span", { class: "pill tiny", title: `Written as ${P}tax:${core.orderName(id)}` }, "ordered") : null,
+          ],
+          expandable: o.categories.length + members.length > 0, expanded: !collapsed.has(key),
+        };
+        row.drag = dragOf("taxonomy", row, "category", (x) => ({ id: x.id, from: x.parent }));
+        row.drop = categoryDrop(row);
+        rows.push(row);
+        if (!row.expandable || !row.expanded) continue;
+        walk(id, key, depth + 1, new Set(trail).add(id));
+        for (const ref of members) {
+          const e = project.elements.find((x) => x.id === ref);
+          const mrow = {
+            key: `${key}/m:${ref}`, parentKey: key, depth: depth + 1, id: ref, cat: id, group: "type", kind: "member", label: labelOf(ref), title: `${P}:${ref}`,
+            swatch: e && !e.abstract ? (e.notation && e.notation.fill) || "transparent" : undefined, icon: e ? null : "↗", italic: !!(e && e.abstract),
+          };
+          mrow.drag = dragOf("taxonomy", mrow, "type", (x) => ({ id: x.id, from: x.cat }));
+          mrow.drop = memberDrop(mrow);
+          rows.push(mrow);
+        }
+      }
+    };
+    if (root.expanded) walk("", "scheme", 1, new Set());
+    if (ui.taxMember) markSelection("taxonomy", rows, ui.taxMember, (r) => r.group === "type");
+    else markSelection("taxonomy", rows, ui.sel.taxonomy, (r) => r.group === "category");
+    return {
+      name: "taxonomy", label: "Taxonomy", rows,
+      onSelect: (r, mods) => chooseRow("taxonomy", r, mods, (x) => {
+        if (x.group === "type") { ui.taxMember = x.id; ui.selKey.taxonomy = x.key; ui.sel.taxonomy = x.cat; render(); }
+        else if (x.group === "category") { ui.taxMember = ""; ui.selKey.taxonomy = x.key; ui.sel.taxonomy = x.id; render(); }
+      }),
+      onToggle: (r, open) => { setOpen("taxonomy", r.key, open); render(); },
+      menu: taxonomyMenu,
+      onMove: taxonomyKeyMove,
+    };
+  }
+
+  /**
+   * A drop on a category row. A category dropped on its middle goes into it, on its top or bottom edge before or
+   * after it; a type goes into it wherever it is dropped (SReq 11.3). On the scheme, a category becomes top level.
+   */
+  function categoryDrop(row) {
+    const scheme = row.group === "scheme";
+    return {
+      between: !scheme,
+      unfold: row.expandable && !row.expanded ? () => { setOpen("taxonomy", row.key, true); render(); } : null,
+      accept: (p, where, alt) => {
+        if (p.kind === "category") {
+          if (scheme) {
+            const moving = p.items.filter((it) => it.from);
+            if (!moving.length) return { ok: false, hint: "Already at the top level" };
+            return { ok: true, hint: "Make it a top-level category", run: () => mutate(() => moving.forEach((it) => core.moveCategory(project, it.id, ""))) };
+          }
+          const parent = where === "into" ? row.id : row.parent;
+          const refused = p.items.find((it) => it.id === row.id || (parent && core.categoryDescendants(project, it.id).has(parent)));
+          if (refused) return { ok: false, hint: "Not inside itself" };
+          if (where === "into") {
+            const moving = p.items.filter((it) => it.from !== row.id);
+            if (!moving.length) return { ok: false, hint: "Already here" };
+            return { ok: true, hint: `Into ${row.label}`, run: () => mutate(() => moving.forEach((it) => core.moveCategory(project, it.id, row.id))) };
+          }
+          const siblings = core.subcategories(project, row.parent);
+          const before = where === "before" ? row.id : siblings[siblings.indexOf(row.id) + 1] || null;
+          return { ok: true, hint: `${where === "before" ? "Before" : "After"} ${row.label}`, run: () => mutate(() => p.items.forEach((it) => core.moveCategory(project, it.id, row.parent, before === it.id ? null : before))) };
+        }
+        if (p.kind === "type" && !scheme) {
+          const moving = p.items.filter((it) => (alt ? !categoriesOf(it.id).includes(row.id) : it.from !== row.id && (it.from || !categoriesOf(it.id).includes(row.id))));
+          if (!moving.length) return { ok: false, hint: "Already here", where: "into" };
+          const from = !alt && moving.length === 1 ? moving[0].from : null;
+          return {
+            ok: true, where: "into",
+            hint: alt ? `Also in ${row.label}` : from ? `Move to ${row.label}. With Alt: keep it in ${catLabel(from)} too` : `Classify in ${row.label}`,
+            run: () => change(() => moving.forEach((it) => core.classify(project, it.id, row.id, alt ? null : it.from))),
+          };
+        }
+        return null;
+      },
+    };
+  }
+
+  /** A drop on a member row places the dragged types before or after it, in its category (SReq 11.7). */
+  function memberDrop(row) {
+    return {
+      between: true,
+      into: false,
+      accept: (p, where, alt) => {
+        if (p.kind !== "type") return null;
+        const items = p.items.filter((it) => it.id !== row.id);
+        if (!items.length) return { ok: false, hint: "Already here" };
+        const members = core.categoryMembers(project, row.cat, false);
+        const before = where === "before" ? row.id : members[members.indexOf(row.id) + 1] || null;
+        const same = items.every((it) => it.from === row.cat);
+        return {
+          ok: true,
+          hint: same ? `${where === "before" ? "Before" : "After"} ${row.label}` : `To ${catLabel(row.cat)}, ${where} ${row.label}`,
+          run: () => change(() => {
+            for (const it of items) {
+              core.classify(project, it.id, row.cat, alt || it.from === row.cat ? null : it.from);
+              core.reorder(project, row.cat, "members", it.id, before === it.id ? null : before);
+            }
+          }),
+        };
+      },
+    };
+  }
+
+  function taxonomyMenu(row) {
+    const at = () => rowAnchor("taxonomy", row.key);
+    if (row.group === "scheme") return [{ label: "New top-level category", run: () => addCategory("") }];
+    if (row.group === "category") {
+      const siblings = core.subcategories(project, row.parent);
+      const i = siblings.indexOf(row.id);
+      return [
+        { label: "New sub-category", run: () => addCategory(row.id) },
+        { label: "Move into…", run: () => pickCategoryParent(row, at()) },
+        row.parent ? { label: "Make it top level", run: () => mutate(() => core.moveCategory(project, row.id, "")) } : null,
+        { label: "Move up", disabled: i <= 0, run: () => shiftRow(row, -1) },
+        { label: "Move down", disabled: i < 0 || i >= siblings.length - 1, run: () => shiftRow(row, 1) },
+        core.narrowerOrder(project, row.id).explicit ? { label: "Clear its order", run: () => mutate(() => core.clearOrder(project, row.id)) } : null,
+        "-",
+        { label: "Delete…", danger: true, run: () => { if (confirm(`Delete category ${row.id}?`)) mutate(() => { core.removeRef(project, row.id, "taxonomy.categories"); if (ui.sel.taxonomy === row.id) ui.sel.taxonomy = null; }); } },
+      ];
+    }
+    const members = core.categoryMembers(project, row.cat, false);
+    const i = members.indexOf(row.id);
+    const isRel = project.relationships.some((r) => r.id === row.id);
+    return [
+      { label: "Open its page", run: () => go(isRel ? "relationships" : "elements", row.id) },
+      "-",
+      { label: "Move to…", run: () => pickCategoryFor(row.id, at(), row.cat) },
+      { label: "Also classify in…", run: () => pickCategoryFor(row.id, at()) },
+      { label: `Take it out of ${catLabel(row.cat)}`, run: () => change(() => core.unclassify(project, row.id, row.cat)) },
+      { label: "Move up", disabled: i <= 0, run: () => shiftRow(row, -1) },
+      { label: "Move down", disabled: i < 0 || i >= members.length - 1, run: () => shiftRow(row, 1) },
+    ];
+  }
+
+  /** A category among its siblings, or a member among its category's members, one place up or down (SReq 11.7). */
+  function shiftRow(row, delta) {
+    ui.focusAfter = { scope: "taxonomy", key: row.key, id: row.id };
+    if (row.group === "category") mutate(() => core.shift(project, row.parent, "categories", row.id, delta));
+    else mutate(() => core.shift(project, row.cat, "members", row.id, delta));
+  }
+
+  function pickCategoryParent(row, at) {
+    const inside = core.categoryDescendants(project, row.id);
+    const choices = [{ value: "", label: "Top level", depth: 0, disabled: !row.parent, note: row.parent ? "" : "already there" }]
+      .concat(categoryChoices((c) => !inside.has(c) && c !== row.parent, (c) => (c === row.parent ? "already its parent" : "itself or inside it")));
+    kit.picker(at, `Move ${row.label} into`, choices, (to) => mutate(() => core.moveCategory(project, row.id, to)));
+  }
+
+  /** Alt+Up and Alt+Down reorder; on a category, Alt+Right puts it into the one above, Alt+Left takes it out of its parent. */
+  function taxonomyKeyMove(row, dir) {
+    if (row.group === "scheme") return;
+    if (dir === "up" || dir === "down") { shiftRow(row, dir === "up" ? -1 : 1); return; }
+    if (row.group === "type") { toast("A type moves to another category from its menu: Move to…"); return; }
+    if (dir === "right") {
+      const siblings = core.subcategories(project, row.parent);
+      const prev = siblings[siblings.indexOf(row.id) - 1];
+      if (!prev) { toast("There is no category above it to go into."); return; }
+      setOpen("taxonomy", `${row.parentKey}/${prev}`, true);
+      ui.focusAfter = { scope: "taxonomy", key: `${row.parentKey}/${prev}/${row.id}`, id: row.id };
+      mutate(() => core.moveCategory(project, row.id, prev));
+      return;
+    }
+    if (!row.parent) { toast("It is at the top level already."); return; }
+    const parentRow = (ui.rows.taxonomy || []).find((r) => r.key === row.parentKey);
+    const grand = parentRow ? parentRow.parent || "" : "";
+    const aunts = core.subcategories(project, grand);
+    ui.focusAfter = { scope: "taxonomy", key: `${parentRow ? parentRow.parentKey : "scheme"}/${row.id}`, id: row.id };
+    mutate(() => core.moveCategory(project, row.id, grand, aunts[aunts.indexOf(row.parent) + 1] || null));
+  }
+
+  function addCategory(parent) {
+    const id = uniqueId("NewCategory", "taxonomy");
+    if (parent) unfoldItem("taxonomy", parent);
+    mutate(() => {
+      project.taxonomy.categories.push({ id, label: core.humanize(id), definition: "", parent, categoryOrder: [], memberOrder: [], orderLabel: "" });
+      ui.sel.taxonomy = id;
+      ui.taxMember = "";
+      ui.selKey.taxonomy = "";
+    });
+  }
+
+  function categoryDetail(c) {
+    const members = core.categoryMembers(project, c.id, false);
+    const found = core.categoryMatches(project).get(c.id);
+    const m = found ? Object.assign({ category: c.id }, found) : null;
+    const o = core.narrowerOrder(project, c.id);
+    const inside = core.categoryDescendants(project, c.id);
+    const setMembers = (list) => {
+      for (const id of members.filter((x) => !list.includes(x))) core.unclassify(project, id, c.id);
+      for (const id of list) core.classify(project, id, c.id);
+    };
+    return h("div", { class: "card" },
+      h("div", { class: "detail-head" }, h("h2", {}, c.label || c.id), h("span", { class: "pill" }, `${project.meta.prefix}tax:${c.id}`),
+        h("button", { class: "btn danger small", onclick: () => { if (confirm(`Delete category ${c.id}?`)) mutate(() => { core.removeRef(project, c.id, "taxonomy.categories"); ui.sel.taxonomy = null; }); } }, "Delete")),
+      inlineIssues("taxonomy", c.id),
       h("div", { class: "grid2" },
-        h("div", { class: "card" },
-          field("Scheme label", textInput(() => tax.label, (v) => { tax.label = v; }, { placeholder: `${project.meta.title} Concept Scheme` })),
-          h("div", { style: { marginTop: "12px" } }, tree("") || h("p", { class: "muted" }, "No categories yet.")),
-          h("button", { class: "btn small", style: { marginTop: "8px" }, onclick: () => addCategory("") }, "+ Top-level category")),
-        h("div", {},
-          sel ? categoryDetail(sel) : h("div", { class: "card empty" }, "Pick a category (✎) to edit its members."),
-          proposalOrdersCard())));
+        idField("taxonomy", "taxonomy", c, "Category"),
+        field("Label", textInput(() => c.label, (v) => { c.label = v; })),
+        field("Parent", select([{ value: "", label: "— top level —" }].concat(catOptions().filter((x) => !inside.has(x.value))), () => c.parent, (v) => { core.moveCategory(project, c.id, v); })),
+        field("Definition", textArea(() => c.definition, (v) => { c.definition = v; }, 2), null, "span2"),
+        field("Members (skos:narrower)", chips(() => members, setMembers, elementOptions(true).filter((x) => !core.isCurie(x.value)).concat(relationshipOptions()), { mutate: change }), null, "span2")),
+      h("h3", { style: { marginTop: "14px" } }, "Abstract type"),
+      m ? matchView(m, "category") : h("p", { class: "small muted" }, "No abstract type has these element types, or nearly these, as its subtypes."),
+      h("h3", { style: { marginTop: "14px" } }, "Order"),
+      o.explicit
+        ? h("p", { class: "small" }, `It has an order of its own, written as ${project.meta.prefix}tax:${core.orderName(c.id)}: la-gram's palette follows it. `,
+          h("button", { class: "btn small", onclick: () => mutate(() => core.clearOrder(project, c.id)) }, "Clear the order"))
+        : h("p", { class: "small muted" }, "No order of its own: la-gram lists its groups and types by name. Drag a row in the tree, or press Alt+Up or Alt+Down on it, to give it one."));
+  }
+
+  function memberDetail(ref) {
+    const cats = categoriesOf(ref);
+    const isRel = project.relationships.some((r) => r.id === ref);
+    return h("div", { class: "card" },
+      h("div", { class: "detail-head" }, h("h2", {}, labelOf(ref)), h("span", { class: "pill" }, `${project.meta.prefix}:${ref}`),
+        h("button", { class: "btn small", onclick: () => go(isRel ? "relationships" : "elements", ref) }, "Open its page")),
+      h("h3", {}, "Classified in"),
+      cats.length
+        ? h("ul", { class: "plain" }, cats.map((c) => h("li", {}, catLink(c), " ",
+          h("button", { class: "btn small ghost", type: "button", "aria-label": `Take it out of ${catLabel(c)}`, onclick: () => change(() => core.unclassify(project, ref, c)) }, "×"))))
+        : h("p", { class: "muted" }, "No category."),
+      h("button", { class: "btn small", type: "button", onclick: (ev) => pickCategoryFor(ref, ev.currentTarget) }, "Also classify in…"));
+  }
+
+  /** The types to drag onto categories, those in none first. A member dropped here leaves its category. */
+  function typesCard() {
+    const all = project.elements.filter((e) => !e.abstract).map((e) => e.id).concat(project.relationships.map((r) => r.id));
+    const chip = (id) => {
+      const e = project.elements.find((x) => x.id === id);
+      const n = categoriesOf(id).length;
+      const el = h("div", { class: "type-chip", tabindex: "0", role: "button", title: `${labelOf(id)}: drag it onto a category, or press Enter to choose one` },
+        e ? h("span", { class: "sw", style: { background: (e.notation && e.notation.fill) || "transparent" } }) : h("span", { class: "tv-icon", "aria-hidden": "true" }, "↗"),
+        labelOf(id), n ? h("span", { class: "muted" }, ` · ${n}`) : null);
+      el.addEventListener("click", () => pickCategoryFor(id, el));
+      el.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); pickCategoryFor(id, el); } });
+      kit.draggable(el, () => ({ kind: "type", items: [{ id, from: null }], label: labelOf(id) }));
+      return el;
+    };
+    const search = h("input", { type: "search", placeholder: "Filter types…", value: ui.filter.types || "", "aria-label": "Filter types" });
+    const body = h("div", { class: "types-body", "data-scroll": "types" });
+    const fill = () => {
+      body.textContent = "";
+      const f = (ui.filter.types || "").toLowerCase();
+      const shown = all.filter((id) => matches(f, id, labelOf(id))).sort((a, b) => labelOf(a).localeCompare(labelOf(b)));
+      const loose = shown.filter((id) => !categoriesOf(id).length);
+      body.appendChild(h("div", { class: "li-group" }, `In no category (${loose.length})`));
+      body.appendChild(loose.length ? h("div", {}, loose.map(chip)) : h("p", { class: "muted small" }, "Every type is in a category."));
+      const rest = h("details", { open: f ? true : null }, h("summary", { class: "li-group" }, `All types (${shown.length})`), h("div", {}, shown.map(chip)));
+      body.appendChild(rest);
+    };
+    search.addEventListener("input", () => { ui.filter.types = search.value; fill(); });
+    fill();
+    const card = h("div", { class: "card types-card" },
+      h("h3", {}, "Types to classify"),
+      h("p", { class: "small muted" }, "Drag a type onto a category; Enter on a type chooses one from a list. A member dragged here leaves its category."),
+      search, body);
+    kit.dropTarget(card, {
+      accept: (p) => {
+        if (p.kind !== "type") return null;
+        const leaving = p.items.filter((it) => it.from);
+        if (!leaving.length) return { ok: false, hint: "Drop it on a category" };
+        return { ok: true, hint: leaving.length === 1 ? `Take it out of ${catLabel(leaving[0].from)}` : "Take them out of their categories", run: () => change(() => leaving.forEach((it) => core.unclassify(project, it.id, it.from))) };
+      },
+    });
+    return card;
+  }
+
+  /** The palette grouping and the diagram group order (SReq 4.5): categories in order, moved by drag, buttons or Alt+arrows. */
+  function groupingCard() {
+    const tax = project.taxonomy;
+    const editor = (key, title, text) => {
+      const coll = tax[key];
+      return h("div", { class: "grouping" },
+        h("h4", {}, title), h("p", { class: "small muted" }, text),
+        coll.members.length ? kit.orderedList({
+          name: key, label: title, items: coll.members.map((id) => ({ id, label: catPathLabel(id) })),
+          move: (from, to) => { ui.focusAfter = { scope: key, key: coll.members[from] }; mutate(() => { const [x] = coll.members.splice(from, 1); coll.members.splice(to, 0, x); }); },
+          remove: (i) => mutate(() => coll.members.splice(i, 1)),
+        }) : h("p", { class: "muted small" }, "None."),
+        chips(() => [], (v) => { coll.members = coll.members.concat(v.filter((x) => !coll.members.includes(x))); }, catOptions().filter((o) => !coll.members.includes(o.value)), { placeholder: "Add a category…" }));
+    };
+    return h("div", { class: "card" },
+      h("h3", {}, "Palette and diagram"),
+      editor("paletteGrouping", "Palette grouping (arch:paletteGrouping)", "The dimensions la-gram's palette groups element types by, the main one first: it makes a section of each group of the first, in that group's order."),
+      editor("diagramGroupOrder", "Diagram bands (arch:diagramGroupOrder)", "The groups a diagram keeps in bands, the top band first."));
   }
 
   /** The relationship proposal orders (SReq 4.2–4.3, SD-4). */
@@ -953,6 +1911,7 @@
   function proposalOrderEditor(o) {
     const list = o.members;
     const scoped = o.domain.length || o.range.length;
+    const scope = "order-" + o.id;
     return h("div", { class: "card", style: { boxShadow: "none" } },
       h("div", { class: "detail-head" },
         h("h2", {}, o.label || (scoped ? core.humanize(o.id) : "General order")),
@@ -964,11 +1923,11 @@
         field("Label", textInput(() => o.label, (v) => { o.label = v; }, { placeholder: scoped ? core.humanize(o.id) : `${project.meta.title} relationship proposal order` })),
         field("Source types (arch:domainIncludes)", chips(() => o.domain, (v) => { o.domain = v; }, elementOptions(true), { free: curieRe, placeholder: "Any source…" })),
         field("Target types (arch:rangeIncludes)", chips(() => o.range, (v) => { o.range = v; }, elementOptions(true), { free: curieRe, placeholder: "Any target…" }))),
-      h("ol", {}, list.map((id, i) => h("li", {}, h("div", { class: "row" },
-        h("span", {}, labelOf(id)), h("span", { class: "spacer" }),
-        h("button", { class: "btn small ghost", disabled: i === 0, onclick: () => mutate(() => { list.splice(i - 1, 0, list.splice(i, 1)[0]); }), "aria-label": "Move up" }, "↑"),
-        h("button", { class: "btn small ghost", disabled: i === list.length - 1, onclick: () => mutate(() => { list.splice(i + 1, 0, list.splice(i, 1)[0]); }), "aria-label": "Move down" }, "↓"),
-        h("button", { class: "btn small ghost", onclick: () => mutate(() => list.splice(i, 1)), "aria-label": "Remove" }, "×"))))),
+      list.length ? kit.orderedList({
+        name: scope, label: `Relationship types of ${o.label || o.id}, in order`, items: list.map((id) => ({ id, label: labelOf(id) })),
+        move: (from, to) => { ui.focusAfter = { scope, key: list[from] }; mutate(() => { const [x] = list.splice(from, 1); list.splice(to, 0, x); }); },
+        remove: (i) => mutate(() => list.splice(i, 1)),
+      }) : null,
       chips(() => [], (v) => { o.members = list.concat(v.filter((x) => !list.includes(x))); }, relationshipOptions().filter((opt) => !list.includes(opt.value)), { placeholder: "Append relationship…" }));
   }
 
@@ -982,59 +1941,264 @@
     }));
   }
 
-  function addCategory(parent) {
-    const id = uniqueId("NewCategory", "taxonomy");
-    mutate(() => { project.taxonomy.categories.push({ id, label: core.humanize(id), definition: "", parent }); ui.sel.taxonomy = id; });
+  /**
+   * Two dimensions crossed (SReq 11.5): the groups of one as columns, of another as rows, and in each cell the element
+   * types in both. Dragging a type to another cell moves it to that cell's groups; with Alt it stays in its own too.
+   */
+  function taxonomyGrid() {
+    const dims = project.taxonomy.categories.filter((c) => core.subcategories(project, c.id).length).map((c) => c.id);
+    if (!dims.length) return h("div", { class: "card empty" }, "A grid needs a dimension: a category with sub-categories, such as Domain with Business, Application and Technology under it.");
+    const grouping = project.taxonomy.paletteGrouping.members.filter((d) => dims.includes(d));
+    const cols = dims.includes(ui.grid.cols) ? ui.grid.cols : grouping[0] || dims[0];
+    const rowsDim = ui.grid.rows === "-" ? "" : dims.includes(ui.grid.rows) && ui.grid.rows !== cols ? ui.grid.rows : grouping.find((d) => d !== cols) || dims.find((d) => d !== cols) || "";
+    const dimSelect = (value, set, none) => {
+      const el = h("select", {}, (none ? [h("option", { value: "-" }, "— none —")] : []).concat(dims.map((d) => h("option", { value: d }, catPathLabel(d)))));
+      el.value = value || "-";
+      el.addEventListener("change", () => { set(el.value); render(); });
+      return el;
+    };
+    const colGroups = core.subcategories(project, cols);
+    const rowGroups = rowsDim ? core.subcategories(project, rowsDim) : [];
+    const deep = new Map(colGroups.concat(rowGroups).map((g) => [g, new Set(core.categoryMembers(project, g, true))]));
+    const groupsOf = (id, groups) => { const gs = groups.filter((g) => deep.get(g).has(id)); return gs.length ? gs : [null]; };
+    const cells = new Map();
+    for (const e of project.elements.filter((x) => !x.abstract).sort(byLabelItem)) {
+      for (const r of rowsDim ? groupsOf(e.id, rowGroups) : [null]) {
+        for (const c of groupsOf(e.id, colGroups)) {
+          const k = `${r}|${c}`;
+          if (!cells.has(k)) cells.set(k, []);
+          cells.get(k).push(e.id);
+        }
+      }
+    }
+    const rowList = rowGroups.concat(!rowsDim || [...cells.keys()].some((k) => k.startsWith("null|")) ? [null] : []);
+    const colList = colGroups.concat([...cells.keys()].some((k) => k.endsWith("|null")) ? [null] : []);
+    const name = (g, dim) => (g ? catLabel(g) : dim ? `No ${catLabel(dim).toLowerCase()}` : "All");
+    const chip = (id, r, c) => {
+      const e = project.elements.find((x) => x.id === id);
+      const el = h("span", { class: "gchip", tabindex: "0", role: "button", title: `${labelOf(id)}: drag it to another cell; Enter opens it` },
+        h("span", { class: "sw", style: { background: (e.notation && e.notation.fill) || "transparent" } }), labelOf(id));
+      el.addEventListener("click", () => go("elements", id));
+      el.addEventListener("keydown", (ev) => { if (ev.key === "Enter") go("elements", id); });
+      kit.draggable(el, () => ({ kind: "cell", items: [{ id, row: r, col: c }], label: labelOf(id) }));
+      return el;
+    };
+    const table = h("table", { class: "tax-grid" },
+      h("thead", {}, h("tr", {}, h("th", { class: "corner" }, rowsDim ? `${catLabel(rowsDim)} ↓  ${catLabel(cols)} →` : `${catLabel(cols)} →`),
+        colList.map((c) => h("th", { title: c ? catPathLabel(c) : "" }, name(c, cols))))),
+      h("tbody", {}, rowList.map((r) => h("tr", {}, h("th", { title: r ? catPathLabel(r) : "" }, name(r, rowsDim)),
+        colList.map((c) => {
+          const td = h("td", { class: "gcell" }, (cells.get(`${r}|${c}`) || []).map((id) => chip(id, r, c)));
+          kit.dropTarget(td, gridDrop(r, c));
+          return td;
+        })))));
+    return h("div", {},
+      h("div", { class: "card row grid-tools" },
+        field("Columns", dimSelect(cols, (v) => { ui.grid.cols = v; })),
+        field("Rows", dimSelect(rowsDim, (v) => { ui.grid.rows = v; }, true)),
+        h("button", { class: "btn small", type: "button", disabled: !rowsDim, onclick: () => { ui.grid = { rows: cols, cols: rowsDim }; render(); } }, "Swap"),
+        h("p", { class: "small muted grow" }, "Drag a type to another cell to move it to that cell's groups; hold Alt to keep it in its own as well. The tree and each type's page do the same without dragging.")),
+      h("div", { class: "grid-wrap", "data-scroll": "tax-grid" }, table));
   }
 
-  function categoryDetail(c) {
-    const members = project.elements.filter((e) => e.categories.includes(c.id)).map((e) => e.id)
-      .concat(project.relationships.filter((r) => r.categories.includes(c.id)).map((r) => r.id));
-    const setMembers = (list) => {
-      for (const e of project.elements) e.categories = list.includes(e.id) ? Array.from(new Set(e.categories.concat([c.id]))) : e.categories.filter((x) => x !== c.id);
-      for (const r of project.relationships) r.categories = list.includes(r.id) ? Array.from(new Set(r.categories.concat([c.id]))) : r.categories.filter((x) => x !== c.id);
+  function gridDrop(r, c) {
+    return {
+      accept: (p, where, alt) => {
+        if (p.kind !== "cell") return null;
+        const moving = p.items.filter((it) => it.row !== r || it.col !== c);
+        if (!moving.length) return { ok: false, hint: "Already here" };
+        const where2 = [r && catLabel(r), c && catLabel(c)].filter(Boolean).join(" and ") || "no group";
+        return {
+          ok: true, hint: alt ? `Also in ${where2}` : `Move to ${where2}. With Alt: keep it where it is too`,
+          run: () => change(() => moving.forEach((it) => { core.regroup(project, it.id, it.row, r, alt); core.regroup(project, it.id, it.col, c, alt); })),
+        };
+      },
     };
-    return h("div", { class: "card" },
-      h("div", { class: "detail-head" }, h("h2", {}, c.label || c.id)),
-      inlineIssues("taxonomy", c.id),
-      h("div", { class: "grid2" },
-        idField("taxonomy", "taxonomy", c, "Category"),
-        field("Parent", select([{ value: "", label: "— top level —" }].concat(catOptions().filter((o) => o.value !== c.id)), () => c.parent, (v) => { c.parent = v; })),
-        field("Definition", textArea(() => c.definition, (v) => { c.definition = v; }, 2), null, "span2"),
-        field("Members (skos:narrower)", chips(() => members, setMembers, elementOptions(true).filter((o) => !core.isCurie(o.value)).concat(relationshipOptions())), null, "span2")));
   }
 
   // ------------------------------------------------------------------ viewpoints
 
   function viewViewpoints() {
-    const tools = [h("button", { class: "btn small", onclick: addViewpoint }, "+ Viewpoint")];
-    const catRows = (f) => {
-      const rows = [];
-      const placed = new Set();
-      const walk = (parent, depth) => {
-        for (const c of project.viewpointCategories.filter((x) => (x.parent || "") === parent)) {
-          const vps = project.viewpoints.filter((v) => v.categories.includes(c.id) && matches(f, v.id, v.label));
-          rows.push({ group: "  ".repeat(depth) + (c.label || c.id) });
-          for (const v of vps) { rows.push({ id: v.id, label: v.label || core.humanize(v.id), depth: depth + 1, tag: `${v.concepts.length}` }); placed.add(v.id); }
-          walk(c.id, depth + 1);
-        }
-      };
-      walk("", 0);
-      const rest = project.viewpoints.filter((v) => !placed.has(v.id) && matches(f, v.id, v.label));
-      if (rest.length) { rows.push({ group: "Uncategorized" }); for (const v of rest) rows.push({ id: v.id, label: v.label || core.humanize(v.id), tag: `${v.concepts.length}` }); }
-      return rows;
-    };
+    const here = () => (project.viewpointCategories.some((c) => c.id === ui.sel.viewpoints) ? ui.sel.viewpoints : "");
+    const tools = [
+      h("button", { class: "btn small", onclick: () => addViewpoint(here()) }, "+ Viewpoint"),
+      h("button", { class: "btn small", onclick: () => addViewpointCategory(here()) }, "+ Category"),
+    ];
     return h("div", {},
-      pageHead("Viewpoints", "arch:Viewpoint individuals: the concepts each admits, its stakeholders, the concerns it frames and its purposes, grouped in a SKOS viewpoint catalog (arch:viewpointLibrary)."),
-      masterDetail("viewpoints", { rows: catRows, tools, detail: viewpointDetail, emptyText: "No viewpoints yet." }),
-      viewpointCategoriesCard());
+      pageHead("Viewpoints", "arch:Viewpoint individuals: the concepts each admits, its stakeholders, the concerns it frames and its purposes, grouped in a SKOS viewpoint catalog (arch:viewpointLibrary). Drag viewpoints between catalog categories and categories into one another; hold Alt to add a viewpoint to a category without taking it out of the one it was in."),
+      masterDetail("viewpoints", { tree: viewpointTree, tools, detail: (id) => viewpointDetail(id) || viewpointCategoryDetail(id), emptyText: "No viewpoints yet." }));
   }
 
-  function addViewpoint() {
+  /** The viewpoint catalog as a tree (SReq 11.1): each viewpoint under each of its categories. */
+  function viewpointTree(filter) {
+    const collapsed = collapsedSet("viewpoints");
+    const cats = project.viewpointCategories;
+    const catIds = new Set(cats.map((c) => c.id));
+    const shownVp = (v) => matches(filter, v.id, v.label);
+    const memo = new Map();
+    const shows = (id, trail) => {
+      if (!filter) return true;
+      if (memo.has(id)) return memo.get(id);
+      if (trail.has(id)) return false;
+      const c = cats.find((x) => x.id === id);
+      const hit = matches(filter, id, c && c.label) || project.viewpoints.some((v) => v.categories.includes(id) && shownVp(v))
+        || cats.some((x) => x.parent === id && shows(x.id, new Set(trail).add(id)));
+      memo.set(id, hit);
+      return hit;
+    };
+    const vpRow = (v, parentKey, depth, cat) => {
+      const row = { key: `${parentKey}/v:${v.id}`, parentKey, depth, id: v.id, cat, group: "viewpoint", kind: "viewpoint", icon: "◎", label: v.label || core.humanize(v.id), title: v.id, tag: String(v.concepts.length) };
+      row.drag = dragOf("viewpoints", row, "viewpoint", (x) => ({ id: x.id, from: x.cat }));
+      return row;
+    };
+    const rows = [];
+    const root = { key: "catalog", parentKey: null, depth: 0, id: "", group: "catalog", kind: "root", label: `${project.meta.title} Viewpoint Catalog`, tag: "catalog", expandable: true, expanded: !!filter || !collapsed.has("catalog") };
+    root.drop = viewpointDrop(root);
+    rows.push(root);
+    const walk = (parent, parentKey, depth, trail) => {
+      for (const c of cats.filter((x) => (x.parent || "") === parent)) {
+        if (trail.has(c.id) || !shows(c.id, new Set())) continue;
+        const key = `${parentKey}/${c.id}`;
+        const inside = project.viewpoints.filter((v) => v.categories.includes(c.id) && shownVp(v)).sort(byLabelItem);
+        const subs = cats.filter((x) => x.parent === c.id);
+        // The count takes in the viewpoints of its sub-categories too.
+        const branch = core.viewpointCategoryDescendants(project, c.id);
+        const all = project.viewpoints.filter((v) => v.categories.some((x) => branch.has(x))).length;
+        const row = {
+          key, parentKey, depth, id: c.id, parent, group: "vpcat", kind: "category", label: c.label || core.humanize(c.id), title: c.id,
+          tag: String(all), expandable: subs.length + inside.length > 0, expanded: !!filter || !collapsed.has(key),
+        };
+        row.drag = dragOf("viewpoints", row, "vpcat", (x) => ({ id: x.id, from: x.parent }));
+        row.drop = viewpointDrop(row);
+        rows.push(row);
+        if (!row.expandable || !row.expanded) continue;
+        walk(c.id, key, depth + 1, new Set(trail).add(c.id));
+        for (const v of inside) rows.push(vpRow(v, key, depth + 1, c.id));
+      }
+    };
+    if (root.expanded) {
+      walk("", "catalog", 1, new Set());
+      for (const v of project.viewpoints.filter((x) => !x.categories.some((c) => catIds.has(c)) && shownVp(x)).sort(byLabelItem)) rows.push(vpRow(v, "catalog", 1, ""));
+    }
+    markSelection("viewpoints", rows, ui.sel.viewpoints, (r) => r.group === "viewpoint" || r.group === "vpcat");
+    return {
+      name: "viewpoints", label: "Viewpoint catalog", rows,
+      onSelect: (r, mods) => chooseRow("viewpoints", r, mods, (x) => { if (x.group !== "catalog") { ui.selKey.viewpoints = x.key; go("viewpoints", x.id); } }),
+      onToggle: (r, open) => { setOpen("viewpoints", r.key, open); render(); },
+      menu: viewpointMenu,
+      onMove: viewpointKeyMove,
+    };
+  }
+
+  const vpCatLabel = (id) => { const c = project.viewpointCategories.find((x) => x.id === id); return c ? c.label || core.humanize(c.id) : id; };
+
+  /** A drop on a catalog category: a viewpoint moves there (with Alt, it is in both); a category goes into it. On the catalog, out of them. */
+  function viewpointDrop(row) {
+    const catalog = row.group === "catalog";
+    return {
+      unfold: row.expandable && !row.expanded ? () => { setOpen("viewpoints", row.key, true); render(); } : null,
+      accept: (p, where, alt) => {
+        if (p.kind === "viewpoint") {
+          if (catalog) {
+            const leaving = p.items.filter((it) => it.from);
+            if (!leaving.length) return { ok: false, hint: "Already here" };
+            return { ok: true, hint: leaving.length === 1 ? `Take it out of ${vpCatLabel(leaving[0].from)}` : "Take them out of their categories", run: () => mutate(() => leaving.forEach((it) => core.moveViewpoint(project, it.id, it.from, null))) };
+          }
+          const inCat = (id) => (project.viewpoints.find((v) => v.id === id) || { categories: [] }).categories.includes(row.id);
+          const moving = p.items.filter((it) => (alt ? !inCat(it.id) : it.from !== row.id));
+          if (!moving.length) return { ok: false, hint: "Already here" };
+          return { ok: true, hint: alt ? `Also in ${row.label}` : `Move to ${row.label}. With Alt: keep it where it is too`, run: () => mutate(() => moving.forEach((it) => core.moveViewpoint(project, it.id, it.from, row.id, alt))) };
+        }
+        if (p.kind === "vpcat") {
+          const to = catalog ? "" : row.id;
+          if (p.items.some((it) => to && (it.id === to || core.viewpointCategoryDescendants(project, it.id).has(to)))) return { ok: false, hint: "Not inside itself" };
+          const moving = p.items.filter((it) => (it.from || "") !== to);
+          if (!moving.length) return { ok: false, hint: "Already here" };
+          return { ok: true, hint: to ? `Into ${row.label}` : "Make it a top-level category", run: () => mutate(() => moving.forEach((it) => core.moveViewpointCategory(project, it.id, to))) };
+        }
+        return null;
+      },
+    };
+  }
+
+  function viewpointMenu(row) {
+    const at = () => rowAnchor("viewpoints", row.key);
+    if (row.group === "catalog") return [{ label: "New viewpoint", run: () => addViewpoint("") }, { label: "New top-level category", run: () => addViewpointCategory("") }];
+    if (row.group === "vpcat") {
+      const c = project.viewpointCategories.find((x) => x.id === row.id);
+      return [
+        { label: "New viewpoint in it", run: () => addViewpoint(row.id) },
+        { label: "New sub-category", run: () => addViewpointCategory(row.id) },
+        { label: "Move into…", run: () => pickViewpointCategory(at(), `Move ${row.label} into`, (x) => !core.viewpointCategoryDescendants(project, row.id).has(x) && x !== row.parent, (to) => mutate(() => core.moveViewpointCategory(project, row.id, to)), true, !!row.parent) },
+        row.parent ? { label: "Make it top level", run: () => mutate(() => core.moveViewpointCategory(project, row.id, "")) } : null,
+        "-",
+        { label: "Delete…", danger: true, run: () => deleteItem("viewpoints", "viewpointCategories", c, "viewpoint category") },
+      ];
+    }
+    const v = project.viewpoints.find((x) => x.id === row.id);
+    if (!v) return [];
+    return [
+      { label: "Open", run: () => { ui.selKey.viewpoints = row.key; go("viewpoints", row.id); } },
+      "-",
+      { label: "Move to…", run: () => pickViewpointCategory(at(), `Move ${row.label} to`, (x) => !v.categories.includes(x), (to) => mutate(() => core.moveViewpoint(project, v.id, row.cat, to))) },
+      { label: "Also in…", run: () => pickViewpointCategory(at(), `Add ${row.label} to`, (x) => !v.categories.includes(x), (to) => mutate(() => core.moveViewpoint(project, v.id, null, to))) },
+      row.cat ? { label: `Take it out of ${vpCatLabel(row.cat)}`, run: () => mutate(() => core.moveViewpoint(project, v.id, row.cat, null)) } : null,
+      "-",
+      { label: "Delete…", danger: true, run: () => deleteItem("viewpoints", "viewpoints", v, "viewpoint") },
+    ];
+  }
+
+  /** A catalog category picked from the tree of them; `top` offers the top level too. */
+  function pickViewpointCategory(at, title, ok, onPick, top, topOk) {
+    const out = top ? [{ value: "", label: "Top level", depth: 0, disabled: !topOk, note: topOk ? "" : "already there" }] : [];
+    const walk = (parent, depth, trail) => {
+      for (const c of project.viewpointCategories.filter((x) => (x.parent || "") === parent)) {
+        if (trail.has(c.id)) continue;
+        const allowed = ok(c.id);
+        out.push({ value: c.id, label: c.label || core.humanize(c.id), depth, disabled: !allowed, note: allowed ? "" : "not here" });
+        walk(c.id, depth + 1, new Set(trail).add(c.id));
+      }
+    };
+    walk("", 0, new Set());
+    kit.picker(at, title, out, onPick);
+  }
+
+  /** On a catalog category, Alt+Right puts it into the one above it and Alt+Left takes it out of its parent. */
+  function viewpointKeyMove(row, dir) {
+    if (row.group !== "vpcat") { if (row.group === "viewpoint") toast("A viewpoint moves to another category from its menu: Move to…"); return; }
+    if (dir === "up" || dir === "down") { toast("Catalog categories keep the order they were made in."); return; }
+    const rows = ui.rows.viewpoints || [];
+    if (dir === "right") {
+      const sib = rows.slice(0, rows.indexOf(row)).reverse().find((r) => r.parentKey === row.parentKey);
+      if (!sib || sib.group !== "vpcat") { toast("There is no category above it to go into."); return; }
+      setOpen("viewpoints", sib.key, true);
+      ui.focusAfter = { scope: "viewpoints", key: `${sib.key}/${row.id}`, id: row.id };
+      mutate(() => core.moveViewpointCategory(project, row.id, sib.id));
+      return;
+    }
+    const parentRow = rows.find((r) => r.key === row.parentKey);
+    if (!parentRow || parentRow.group !== "vpcat") { toast("It is at the top level already."); return; }
+    ui.focusAfter = { scope: "viewpoints", key: `${parentRow.parentKey}/${row.id}`, id: row.id };
+    mutate(() => core.moveViewpointCategory(project, row.id, parentRow.parent || ""));
+  }
+
+  function addViewpoint(cat) {
     const id = uniqueId("NewViewpoint", "viewpoint");
+    if (cat) unfoldItem("viewpoints", cat);
     mutate(() => {
-      project.viewpoints.push({ id, label: core.humanize(id), definition: "", concepts: [], stakeholders: [], concerns: [], purposes: [], viewTypes: ["Diagram"], categories: project.viewpointCategories[0] ? [project.viewpointCategories[0].id] : [] });
+      project.viewpoints.push({ id, label: core.humanize(id), definition: "", concepts: [], stakeholders: [], concerns: [], purposes: [], viewTypes: ["Diagram"], categories: cat ? [cat] : project.viewpointCategories[0] ? [project.viewpointCategories[0].id] : [] });
       ui.sel.viewpoints = id;
+      ui.selKey.viewpoints = "";
+    });
+  }
+
+  function addViewpointCategory(parent) {
+    const id = uniqueId("NewViewpointCategory", "viewpoint");
+    if (parent) unfoldItem("viewpoints", parent);
+    mutate(() => {
+      project.viewpointCategories.push({ id, label: core.humanize(id), definition: "", parent: parent || "" });
+      ui.sel.viewpoints = id;
+      ui.selKey.viewpoints = "";
     });
   }
 
@@ -1100,22 +2264,24 @@
       extraRefs.length ? h("p", { class: "small muted", style: { marginTop: "8px" } }, "Also included: ", extraRefs.join(", ")) : null);
   }
 
-  function viewpointCategoriesCard() {
-    const cats = project.viewpointCategories;
-    return h("div", { class: "card", style: { marginTop: "16px" } },
-      h("h3", {}, "Viewpoint catalog categories"),
-      h("table", { class: "tbl" },
-        h("thead", {}, h("tr", {}, h("th", {}, "Id"), h("th", {}, "Label"), h("th", {}, "Parent"), h("th", {}, "Viewpoints"), h("th", {}))),
-        h("tbody", {}, cats.map((c) => h("tr", {},
-          h("td", {}, h("code", {}, c.id)),
-          h("td", {}, textInput(() => c.label, (x) => { c.label = x; })),
-          h("td", {}, select([{ value: "", label: "— top level —" }].concat(cats.filter((x) => x.id !== c.id).map((x) => ({ value: x.id, label: x.label || x.id }))), () => c.parent, (x) => { c.parent = x; })),
-          h("td", {}, project.viewpoints.filter((v) => v.categories.includes(c.id)).length),
-          h("td", {}, h("button", { class: "btn small ghost", onclick: () => mutate(() => core.removeRef(project, c.id, "viewpointCategories")) }, "×")))))),
-      h("button", { class: "btn small", style: { marginTop: "8px" }, onclick: () => {
-        const id = uniqueId("NewViewpointCategory", "viewpoint");
-        mutate(() => cats.push({ id, label: core.humanize(id), definition: "", parent: "" }));
-      } }, "+ Category"));
+  function viewpointCategoryDetail(id) {
+    const c = project.viewpointCategories.find((x) => x.id === id);
+    if (!c) return null;
+    const inside = project.viewpoints.filter((v) => v.categories.includes(c.id));
+    const below = core.viewpointCategoryDescendants(project, c.id);
+    return h("div", { class: "card" },
+      h("div", { class: "detail-head" }, h("h2", {}, c.label || core.humanize(c.id)), h("span", { class: "pill" }, `${inside.length} viewpoints`),
+        deleteButton("viewpoints", "viewpointCategories", c, "viewpoint category")),
+      inlineIssues("viewpoints", c.id),
+      h("div", { class: "grid2" },
+        idField("viewpoints", "viewpoint", c, "Category"),
+        field("Label", textInput(() => c.label, (x) => { c.label = x; })),
+        field("Parent", select([{ value: "", label: "— top level —" }].concat(project.viewpointCategories.filter((x) => !below.has(x.id)).map((x) => ({ value: x.id, label: x.label || x.id }))), () => c.parent, (x) => { core.moveViewpointCategory(project, c.id, x); })),
+        field("Definition", textArea(() => c.definition, (x) => { c.definition = x; }, 2), null, "span2")),
+      h("h3", { style: { marginTop: "14px" } }, "Viewpoints in it"),
+      inside.length
+        ? h("div", { class: "rel-list" }, inside.sort(byLabelItem).map((v) => h("a", { href: "#", onclick: (ev) => { ev.preventDefault(); go("viewpoints", v.id); } }, v.label || core.humanize(v.id))))
+        : h("p", { class: "muted small" }, "None."));
   }
 
   // ------------------------------------------------------------------ stakeholders, concerns, purposes
@@ -1293,7 +2459,8 @@
   /** Open the item a finding is about. On the Notation page that is an own shape; on Taxonomy, a category or an order. */
   function openFinding(i) {
     if (i.tab === "notation" && project.shapes.some((s) => s.id === i.id)) { ui.sel.shapes = i.id; go("notation"); return; }
-    if (i.tab === "taxonomy" && project.proposalOrders.some((o) => o.id === i.id)) { go("taxonomy"); return; }
+    if (i.tab === "taxonomy" && (!i.id || project.proposalOrders.some((o) => o.id === i.id))) { view.taxView = "tree"; go("taxonomy"); return; }
+    if (i.tab === "taxonomy") { view.taxView = "tree"; ui.taxMember = ""; }
     go(i.tab, i.id || ui.sel[i.tab]);
   }
   const VIEWS = {
@@ -1308,6 +2475,7 @@
     history.undo.push(JSON.stringify(project)); history.redo = [];
     project = core.normalize(p);
     ui.sel = {}; ui.filter = {}; ui.matrixRel = ""; ui.matrixRowCat = ""; ui.matrixColCat = ""; ui.outFile = "";
+    ui.selKey = {}; ui.picked = {}; ui.anchor = {}; ui.rows = {}; ui.taxMember = ""; ui.grid = { rows: "", cols: "" };
     ui.tab = "overview";
     changed(true);
     if (message) toast(message);

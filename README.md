@@ -42,8 +42,9 @@ the language. The studio generates one document per manifest property:
 |---|---|---|
 | `arch:modelConcepts` | `<slug>-onto.ttl`: `owl:Ontology` at `<base>onto#` | Element types (`owl:Class` ⊑ `arch:Element`, abstract ones marked `arch:isAbstractClass true`). Relationship types as three terms each: a `QualifiedRelationship` subclass carrying `skos:notation` (the letter of the specification's tables), its direct predicate (`arch:unqualifiedForm`) with `arch:domainIncludes`/`arch:rangeIncludes` guidance, and a `qualified<Rel>` predicate. Attributes (`owl:DatatypeProperty`). |
 | `arch:formalRules` | `<slug>-shapes.ttl`: `<base>shapes#` | SHACL. Per relationship, a `sh:NodeShape` targeting the relationship class with an `sh:or` of `(source, target)` `sh:and` pairs; per source element, a shape over its direct predicates; per attribute, datatype, cardinality and `sh:in`. This is the layout of the published ArchiMate shapes. |
-| `arch:conceptClassification` | `<slug>-tax.ttl`: a plain `skos:ConceptScheme` at `<base>tax#` | Categories (`skos:narrower` down to the classes) and the relationship proposal orders (`skos:OrderedCollection`). |
+| `arch:conceptClassification` | `<slug>-tax.ttl`: a plain `skos:ConceptScheme` at `<base>tax#` | Categories (`skos:narrower` down to the classes); a category's own order of its groups or types, as an ISO 25964 thesaurus array under it (`<Category>Order`, `iso-thes:superOrdinate`); and the collections below. |
 | `arch:relationshipProposalOrder` | in `<slug>-tax.ttl` | Each order in which a modelling tool proposes relationship types when two elements are connected: the general one, and any that name the source or target types they apply to (`arch:domainIncludes`, `arch:rangeIncludes`). |
+| `arch:paletteGrouping`, `arch:diagramGroupOrder` | in `<slug>-tax.ttl` | The dimensions a palette groups element types by, the main one first, and the groups a diagram keeps in bands, the top band first: each a `skos:OrderedCollection` of categories. |
 | `arch:architectureViewpoints`, `arch:viewpointLibrary` | `<slug>-viewpoints.ttl`: `<base>viewpoints#` | `arch:Viewpoint` individuals (`arch:includesConcept`, `arch:targetsStakeholder`, `arch:viewpointFramesConcern`, `arch:viewpointHasPurpose`, `arch:viewType`), the stakeholders, concerns and purposes they use, and the `ViewpointCatalog` concept scheme. |
 | `arch:notationSet` | `<slug>-notation.ttl`: `<base>notation#` | An `arch-vis:NotationSet` with an `arch-vis:VisualNotation` per concept. Its `arch-vis:Style` carries the shape type (`arch-vis:Rectangle`, `arch-vis:RoundedRectangle`, …) and colours of an element type, and the line style and both line ends (`arch-vis:sourceDecor`, `arch-vis:targetDecor`) of a relationship type. Figures core-vis does not define, such as a cylinder, are declared as own `arch-vis:ShapeType`s with a core fallback and path templates. |
 | *(entry point)* | `<slug>-metamodel.ttl`: `<base>metamodel#<Name>` | The `arch:Metamodel` itself: `owl:versionInfo` (the *language* version), `arch:basedOnFramework`, `arch:metamodelIdentifiesStakeholder`/`…Consideration`, and the properties above. |
@@ -66,22 +67,33 @@ the published Backstage, C4 and LeanIX manifests and shapes, and the manifest re
 - **Overview**: identity, IRIs, versions, which assets to ship, the manifest's
   stakeholders and considerations, and other languages you extend (for example,
   `cp:Microservice` ⊑ `am4:ApplicationComponent`).
-- **Elements**: the type hierarchy as a tree. Abstract and concrete types, multiple
-  inheritance, labels, definitions, taxonomy categories and default notation.
-- **Relationships**: class, direct predicate, notation letter, specialization (a subtype
-  that keeps its parent's predicate, such as `ReadAccess` → `accesses`, declares no
-  predicate of its own), domain/range guidance, and the line: its style, both ends and
-  colour.
+- **Elements**: the type hierarchy as a tree. A type with two parents appears under both,
+  and choosing it highlights its other place; a type of another language that one of yours
+  specializes, such as `am4:ApplicationComponent`, heads its subtypes. Abstract and concrete
+  types, labels, definitions, taxonomy categories and default notation. Each type's page opens
+  with its **relations**: a diagram of its parents, subtypes and categories, its paths to the
+  root, the rules it is the source or target of, the attributes, guidance and proposal orders
+  that name it or an ancestor, and the viewpoints that include it.
+- **Relationships**: the types as a tree of what each is a kind of. Class, direct predicate,
+  notation letter, specialization (a subtype that keeps its parent's predicate, such as
+  `ReadAccess` → `accesses`, declares no predicate of its own), domain/range guidance, and the
+  line: its style, both ends and colour. Each page shows the type's relations too.
 - **Attributes**: datatype, applies-to, allowed values, required or repeatable.
 - **Relationship rules**: a source × target matrix. Look at one relationship to toggle
   cells, rows or columns. Look at all of them to see the letters (as in the ArchiMate
   relationship tables) and pick from a popover. *Seed from domain/range* expands the
   guidance to concrete types as a starting point. A relationship with no rules stays
   unconstrained.
-- **Taxonomy**: the category tree, its members, and the relationship proposal orders,
-  general and scoped.
-- **Viewpoints**: catalog categories, stakeholders, concerns, purposes, view types, and
-  the admitted concepts picked by taxonomy group.
+- **Taxonomy**: the category tree with each category's members in it, a list of the types in
+  no category yet, and a **grid** that crosses two dimensions, such as ArchiMate's domains and
+  aspects, with each element type in its cell. A category whose element types are exactly, or
+  nearly, the subtypes of one abstract type says so, and lists any difference with a fix: the
+  studio works this out from the members alone. Changing one side of such a pair offers the
+  same change on the other. The order of a category's groups and types, the palette grouping
+  and the diagram bands are written for la-gram's palette, and so are the relationship
+  proposal orders, general and scoped.
+- **Viewpoints**: the catalog as a tree of categories and viewpoints; stakeholders, concerns,
+  purposes, view types, and the admitted concepts picked by taxonomy group.
 - **Notation**: the palette rendered from the notation set, and the own shapes.
 - **Generated files**: every document, live, with syntax highlighting, plus download as
   a `.zip`.
@@ -93,7 +105,30 @@ the published Backstage, C4 and LeanIX manifests and shapes, and the manifest re
 Work is saved in the browser as you go (localStorage, per browser). Use **Save project**
 for the `.studio.json` file, which is the editable source to keep in version control,
 and **Undo** (Ctrl+Z) for mistakes. Project files saved by earlier versions open and are
-brought up to date.
+brought up to date. Which rows are folded, and the taxonomy's view, are kept per browser too;
+they are not part of the project.
+
+## Moving things around
+
+Every hierarchy is a tree: element types, relationship types, taxonomy categories and the
+viewpoint catalog. Drag a row and it says where it would land and what a drop would do, or
+why it cannot: nothing goes under itself or one of its own subtypes. Everything a drag does
+can also be done from the row's ⋯ menu (or a right-click) and from the keyboard.
+
+| To | Drag | Keyboard and menu |
+|---|---|---|
+| Move a type under another parent | drop it on the new parent | Alt+Right puts it under the row above, Alt+Left under its parent's parent; *Move under…* |
+| Give a type a second parent | hold Alt while dropping | *Add a parent…* |
+| Take a type out of a parent | drop it on *Element* at the top | *Stop specializing …* |
+| Classify a type | drop it on a category, from the tree or from *Types to classify* | *Classify in…*; Enter on a type in *Types to classify* |
+| Move a type to another category | drop its row on the category; Alt keeps it in both | *Move to…*, *Also classify in…* |
+| Order a category's groups or types | drop above or below a row | Alt+Up, Alt+Down; *Move up*, *Move down* |
+| Order a proposal order, the palette grouping or the diagram bands | drag a line | Alt+Up, Alt+Down, or the ↑ ↓ buttons |
+| Move a type to another cell of the grid | drag it; Alt keeps it in its own cell too | the tree, or the type's page |
+
+The arrow keys move between rows, Right and Left unfold and fold them, Enter opens a row,
+Space chooses it together with others (as Ctrl-click and Shift-click do), and Shift+F10 opens
+its menu. A drag of a row chosen with others moves all of them. Escape stops a drag.
 
 ## Starting points
 
@@ -113,9 +148,11 @@ brought up to date.
 
 Generating, importing and generating again is lossless. The tests check that all six
 documents come back isomorphic. Importing a published set keeps what the studio's project
-model holds: it leaves out, for now, icons, alternative styles, rendering modes,
-presentation contexts, palette grouping, element and principle shapes, relationship
-tables and the source attribution on classes.
+model holds, the order of its groups and types, its palette grouping and its diagram group
+order included: importing ArchiMate 4.0 and generating it again gives la-gram the same
+palette. It leaves out, for now, icons, alternative styles, rendering modes, presentation
+contexts, element and principle shapes, relationship tables and the source attribution on
+classes and categories.
 
 ## Using the result in la-gram
 
@@ -145,7 +182,8 @@ python3 bin/la-kg validate run --data model.trig --shapes out/cloudplatform-shap
 | Path | |
 |---|---|
 | `index.html`, `styles.css`, `js/app.js` | The user interface |
-| `js/core.js` | Project model: defaults, namespaces, scoped ids, rename and delete, the notation vocabulary |
+| `js/tree.js` | Its trees, ordered lists, menus and drag and drop |
+| `js/core.js` | Project model: defaults, namespaces, scoped ids, rename and delete, the notation vocabulary, and the moves, orders and relations the trees use |
 | `js/generator.js` | Project → Turtle documents |
 | `js/importer.js` | Turtle documents → project (uses N3.js) |
 | `js/lint.js` | Checks |
@@ -154,7 +192,7 @@ python3 bin/la-kg validate run --data model.trig --shapes out/cloudplatform-shap
 | `scripts/cli.js` | Command line |
 | `scripts/sync-fixtures.mjs` | Refreshes `fixtures/` from the kernel's copies of the published documents |
 | `fixtures/` | Published documents, byte for byte: core, core-vis and ArchiMate 4.0 (`fixtures/README.md`) |
-| `tests/` | `studio.test.js` (Node), `test_metamodel_studio.py` (Python), `kernel/` (through `@linked-archi/kernel`) |
+| `tests/` | `studio.test.js` (Node), `test_metamodel_studio.py` (Python), `kernel/` (through `@linked-archi/kernel`), `ui/` (the page in a browser) |
 | `vendor/n3.min.js` | [N3.js](https://github.com/rdfjs/N3.js) 2.13.12, its browser bundle, MIT (`vendor/N3-LICENSE.md`) |
 | `.agents/` | Conventions, specification and plan, for people and coding agents (`AGENTS.md`) |
 
@@ -166,13 +204,16 @@ pip install -r requirements-dev.txt
 python3 -m unittest discover -s tests            # independent RDF and SHACL checks
 npm install                                      # development dependencies: Vitest and the kernel
 npm run test:kernel                              # what la-gram and the workspace read from the output
+npm install --save-dev playwright                # once, for the page's checks
+npm run test:ui                                  # drags, menus and keys, in Chrome or Playwright's Chromium
 npm run fixtures                                 # refresh fixtures/ from the kernel (-- --check compares)
 npm run templates                                # after changing the importer, generator or fixtures
 ```
 
 A test fails when the committed templates are stale. The kernel checks need Node 22 and
 `@linked-archi/kernel`, installed from the tarball in `../linked-archi-kernel`; until the
-kernel is published they run locally, not in CI.
+kernel is published they run locally, not in CI. The page's checks need Playwright and a
+browser, so they run locally too, and skip without them.
 
 GitLab CI (`.gitlab-ci.yml`) runs `npm test`, the Python tests and the command line on
 every merge request and on `main`.

@@ -4,6 +4,12 @@
 
 ---
 
+## A4 Form authoring scope — 2026-11-25
+
+- [x] Align the plan with the current S01 contract. Author SHACL sections, field names and order, and
+  language-tagged ontology and taxonomy labels for any metamodel.
+- [ ] Implement and qualify the A4 authoring and round-trip behavior.
+
 ## A1 Align with core, core-vis and the kernel
 
 **2026-11-21: done, uncommitted, for review.** Working notes and the failing baseline: `../../tasks/a1-align/`.
@@ -50,6 +56,32 @@ maintainer.
 - [ ] A push mirror to `github.com/linked-archi/metamodel-studio` (*Settings › Repository › Mirroring
   repositories*). On GitHub: issues off, and the description pointing to GitLab
 
+## Hierarchy editing (SReq 11, SD-12 to SD-16)
+
+**2026-11-25: done, uncommitted, for review.** Working notes: `../../tasks/hierarchy-editing/`.
+
+- [x] One tree for every hierarchy: an item under each of its parents, a type of another language as an anchor, rows
+  that fold (SReq 11.1, SD-12) — *tests/ui*
+- [x] Moves that refuse cycles; the row under the pointer says what a drop does, or why not (SReq 11.2) —
+  *studio.test.js, tests/ui*
+- [x] Drag and drop, with a menu and keys for every move; several rows at once (SReq 11.3, SD-16) — *tests/ui*
+- [x] Relations on each element and relationship type's page, with a diagram (SReq 11.4) — *studio.test.js*
+- [x] The taxonomy as a board: members in the tree, the types in no category, a grid of two dimensions (SReq 11.5) —
+  *tests/ui*
+- [x] The match between a category and an abstract type, computed, with fixes and offers (SReq 11.6, SD-13) —
+  *studio.test.js, tests/ui*
+- [x] Orders: a category's groups and types, the palette grouping, the diagram bands and the proposal orders;
+  written, imported and read by the kernel (SReq 4.4–4.5, 7.2, 9.2, 9.4, 11.7, SD-14) — *studio.test.js,
+  test_metamodel_studio.py, consumers.test.mjs*
+- [x] Project format `/3` (SReq 10.3, SD-15) — *studio.test.js*
+- [x] The Cloud Platform template orders Compute's types, groups its palette by Elements and keeps diagram bands
+- [x] `npm test` (31), the Python tests (12), `npm run test:kernel` (31) and `npm run test:ui` (11) pass; every page
+  renders both templates with no page error, light and dark, and at phone width
+- [ ] Playwright as a development dependency, to edit by hand: `npm install --save-dev --save-exact playwright@1.63.0`,
+  the version la-gram uses. Until then `npm run test:ui` skips its checks
+- [ ] To decide: reading and writing the `rdfs:seeAlso` from a category to its abstract type (design.md, *Open
+  questions*)
+
 ## A2–A4
 
 See `plan.md`. Not started.
@@ -57,9 +89,13 @@ See `plan.md`. Not started.
 ## Known limitations
 
 - **Import keeps what the project model holds.** From a published set it drops icons (`arch:prefVisNotation`,
-  `arch-vis:iconSymbol`), alternative styles, rendering modes and default sizes, presentation contexts, palette
-  grouping and diagram group order, element and principle shapes, relationship tables, and the source attribution
-  on classes.
+  `arch-vis:iconSymbol`), alternative styles, rendering modes and default sizes, presentation contexts, element and
+  principle shapes, relationship tables, the source attribution on classes, and the `rdfs:seeAlso` from a category
+  to its abstract type.
+- **Drag and drop needs a mouse or a pen.** On a touch screen a list scrolls instead, and a row's menu moves it.
+- **Subtypes have no order of their own:** element and relationship subtypes are listed by name, catalog categories
+  in the order they were made.
+- **The page's checks run locally,** with Playwright and a browser, not in CI.
 - **The kernel checks run locally only** until `@linked-archi/kernel` is published (SReq 9.5). They use the tarball
   the kernel packed on 2026-11-20; its `metamodel-manager` and `rdf-engine` equal the kernel's source of
   2026-11-21. When the kernel packs again, run `npm install`.
@@ -70,6 +106,19 @@ See `plan.md`. Not started.
 
 ## Change log
 
+- **2026-11-25. Editing hierarchies and classification (SReq 11, SD-12 to SD-16).**
+  - **Trees** for element types, relationship types, taxonomy categories and the viewpoint catalog: an item under
+    each of its parents, a type of another language as an anchor. The element tree had listed a type under its first
+    parent only, so ArchiMate 4.0's domain types showed empty; the relationship list had indented subtypes under the
+    wrong rows. *tests/ui*
+  - **Drag and drop, menus and keys** for every move (`tree.js`), each through a new engine function in `core.js`.
+    *studio.test.js, tests/ui*
+  - **Relations** on each type's page, with a diagram. *studio.test.js*
+  - **The taxonomy as a board,** with a grid of two dimensions and the match between categories and abstract types
+    worked out from membership. *studio.test.js, tests/ui*
+  - **Orders written and read:** thesaurus arrays under categories, the palette grouping and the diagram group order;
+    project format `/3`. Importing ArchiMate 4.0 and generating it again now gives la-gram the published palette.
+    *studio.test.js, test_metamodel_studio.py, consumers.test.mjs*
 - **2026-11-22. The repository moves to GitLab (SD-11).** A public project beside la-gram, with a push mirror to
   GitHub for visibility. The engine becomes `packages/engine` here and is published to the project's package
   registry. `.gitlab-ci.yml` replaces GitHub Actions, and the page is deployed beside la-gram at
